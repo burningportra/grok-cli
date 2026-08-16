@@ -51,6 +51,7 @@ export function usePromptSuggester(
   cwd: string,
   sessionId: string | null,
   baseURL: string,
+  active = true,
 ): PromptSuggesterState {
   const [settings, setSettings] = useState<ResolvedSuggesterSettings>(() => loadSuggesterSettings());
   const [suggestion, setSuggestion] = useState<string | null>(null);
@@ -92,6 +93,19 @@ export function usePromptSuggester(
     sessionStateRef.current = loaded;
     setSessionState(loaded);
   }, [cwd, sessionId]);
+
+  useEffect(() => {
+    if (active) return;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    seedAbortRef.current?.abort();
+    seedAbortRef.current = null;
+    seedPendingRef.current = null;
+    epochRef.current += 1;
+    setSuggestion(null);
+    suggestionRef.current = null;
+    setDismissed(true);
+  }, [active]);
 
   useEffect(() => {
     const poll = () => {
@@ -182,9 +196,10 @@ export function usePromptSuggester(
   );
 
   const ensureSeed = useCallback(() => {
+    if (!active) return;
     const stale = checkSeedStaleness(cwd);
     if (stale.stale && stale.trigger) void runReseed(stale.trigger);
-  }, [cwd, runReseed]);
+  }, [active, cwd, runReseed]);
 
   const requestReseed = useCallback(() => {
     void runReseed({ reason: "manual", changedFiles: [] });
@@ -211,7 +226,7 @@ export function usePromptSuggester(
   const requestAfterTurn = useCallback(
     (entries: ChatEntry[], status: TurnStatus, abortNote?: string) => {
       const current = settingsRef.current;
-      if (!current.enabled) return;
+      if (!active || !current.enabled) return;
 
       const epoch = ++epochRef.current;
       abortRef.current?.abort();
@@ -299,7 +314,7 @@ export function usePromptSuggester(
           applyResult(null);
         });
     },
-    [baseURL, cwd, insertSuggestion, persistState, runReseed],
+    [active, baseURL, cwd, insertSuggestion, persistState, runReseed],
   );
 
   const setEnabled = useCallback(
@@ -339,7 +354,7 @@ export function usePromptSuggester(
 
   const handleKey = useCallback(
     (key: KeyEvent, blocked: boolean) => {
-      if (blocked || !settingsRef.current.enabled) return false;
+      if (!active || blocked || !settingsRef.current.enabled) return false;
       const editorText = inputRef.current?.plainText ?? "";
       const text = suggestionRef.current;
       if (!text || dismissedRef.current) return false;
@@ -372,10 +387,10 @@ export function usePromptSuggester(
 
       return false;
     },
-    [accept, dismiss, inputRef],
+    [accept, active, dismiss, inputRef],
   );
 
-  const visible = Boolean(settings.enabled && suggestion && editorEmpty && !dismissed);
+  const visible = Boolean(active && settings.enabled && suggestion && editorEmpty && !dismissed);
 
   return {
     suggestion,

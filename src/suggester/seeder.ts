@@ -18,7 +18,7 @@ import { fileExistsInRepo, runSeederTool, type SeederToolName, toRepoRelative } 
 import { extractJsonObject, renderSeederSystemPrompt, renderSeederUserPrompt } from "./seeder-prompt.js";
 import type { SuggestionTokenUsage } from "./types.js";
 
-const MAX_SEEDER_STEPS = 8;
+const MAX_SEEDER_STEPS = 4;
 
 export interface SeederRunResult {
   seed?: SeedArtifact;
@@ -50,7 +50,7 @@ export async function generateProjectSeed(
         previousSeed,
         step: Math.min(step, MAX_SEEDER_STEPS),
         maxSteps: MAX_SEEDER_STEPS,
-        history,
+        history: history.slice(-2),
         forceFinal,
       }),
       signal,

@@ -18,15 +18,15 @@ describe("renderSuggestionPrompt", () => {
       noSuggestionToken: "[no suggestion]",
     };
     const prompt = renderSuggestionPrompt(context);
-    expect(prompt).toContain("Grok session");
+    expect(prompt).toContain("Next user message only");
     expect(prompt).toContain("[no suggestion]");
     expect(prompt).toContain("add tests");
     expect(prompt).toContain("src/foo.test.ts");
     expect(prompt).toContain("Want me to run them?");
-    expect(prompt).toContain("ProjectIntent");
+    expect(prompt).toContain("Intent:");
     expect(prompt).toContain("Port the Pi suggester");
     expect(prompt).toContain("Prefer terse commands.");
     expect(prompt).toContain("add tests first");
-    expect(prompt).toContain("under 200 characters");
+    expect(prompt).toContain("Max 200 chars");
   });
 });

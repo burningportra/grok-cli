@@ -2,7 +2,7 @@
 
 ## pi-prompt-suggester
 
-The next-prompt suggester in `src/suggester/` is a Grok CLI port of
+The next-prompt suggester plugin in `src/suggester/` is a Grok CLI port of
 [pi-prompt-suggester](https://github.com/guwidoe/pi-prompt-suggester)
 by **Guido Witt-Dörring**.
 

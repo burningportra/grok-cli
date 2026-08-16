@@ -10,6 +10,7 @@ import { projectKeyFor } from "./store.js";
 
 export const CURRENT_SEED_VERSION = 1;
 export const CURRENT_GENERATOR_VERSION = "2026-08-16.1";
+export const BOOTSTRAP_GENERATOR_VERSION = "bootstrap";
 export const SEEDER_PROMPT_VERSION = "2026-08-16.1";
 
 export type ReseedReason = "initial_missing" | "manual" | "key_file_changed";
@@ -104,26 +105,23 @@ export function hashFile(absolutePath: string): string {
 
 export function compactSeedForPrompt(seed: SeedArtifact | null): string {
   if (!seed) return "none";
-  return JSON.stringify(
-    {
-      projectIntentSummary: seed.projectIntentSummary,
-      objectivesSummary: seed.objectivesSummary,
-      constraintsSummary: seed.constraintsSummary,
-      principlesGuidelinesSummary: seed.principlesGuidelinesSummary,
-      implementationStatusSummary: seed.implementationStatusSummary,
-      topObjectives: seed.topObjectives,
-      constraints: seed.constraints,
-      openQuestions: seed.openQuestions,
-      keyFiles: seed.keyFiles.map((file) => ({
-        path: file.path,
-        category: file.category,
-        whyImportant: file.whyImportant,
-      })),
-      categoryFindings: seed.categoryFindings,
-    },
-    null,
-    2,
-  );
+  const files = seed.keyFiles
+    .slice(0, 6)
+    .map((file) => file.path)
+    .join(", ");
+  return [
+    clip(seed.projectIntentSummary, 360),
+    clip(seed.objectivesSummary, 200),
+    clip(seed.constraintsSummary, 200),
+    files ? `files: ${files}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function clip(value: string, max: number): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length <= max ? text : text.slice(0, max).trimEnd();
 }
 
 export function validateSeedDraft(draft: SeedDraft): string | null {
@@ -221,4 +219,67 @@ function asStringArray(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+const BOOTSTRAP_FILES: Array<{ path: string; category: SeedKeyFileCategory }> = [
+  { path: "README.md", category: "vision" },
+  { path: "AGENTS.md", category: "principles_guidelines" },
+  { path: "package.json", category: "code_entrypoint" },
+];
+
+export function bootstrapSeedFromRepo(cwd: string): SeedArtifact | null {
+  const keyFiles: SeedKeyFile[] = [];
+  const snippets: string[] = [];
+  for (const file of BOOTSTRAP_FILES) {
+    const absolute = path.resolve(cwd, file.path);
+    try {
+      if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) continue;
+      const text = fs.readFileSync(absolute, "utf-8").slice(0, 1_200).replace(/\s+/g, " ").trim();
+      keyFiles.push({
+        path: file.path,
+        hash: hashFile(absolute),
+        whyImportant: "High-signal repo file used for instant seed",
+        category: file.category,
+      });
+      if (text) snippets.push(`${file.path}: ${text.slice(0, 280)}`);
+    } catch {
+      /* skip unreadable files */
+    }
+  }
+  if (keyFiles.length === 0) return null;
+
+  const summary = snippets.join(" ").slice(0, 500) || "Local repository.";
+  const emptyFinding = (found: boolean, files: string[]): SeedCategoryFinding => ({
+    found,
+    rationale: found ? "Present at repo root." : "Not found at repo root.",
+    files,
+  });
+
+  return {
+    seedVersion: CURRENT_SEED_VERSION,
+    generatedAt: new Date().toISOString(),
+    generatorVersion: BOOTSTRAP_GENERATOR_VERSION,
+    seederPromptVersion: SEEDER_PROMPT_VERSION,
+    projectIntentSummary: summary,
+    objectivesSummary: summary,
+    constraintsSummary: "",
+    principlesGuidelinesSummary: keyFiles.some((file) => file.path === "AGENTS.md") ? "See AGENTS.md" : "",
+    implementationStatusSummary: "Bootstrap seed; a background reseed will refine this.",
+    topObjectives: [],
+    constraints: [],
+    keyFiles,
+    categoryFindings: {
+      vision: emptyFinding(
+        keyFiles.some((file) => file.category === "vision"),
+        keyFiles.filter((file) => file.category === "vision").map((file) => file.path),
+      ),
+      architecture: emptyFinding(false, []),
+      principles_guidelines: emptyFinding(
+        keyFiles.some((file) => file.category === "principles_guidelines"),
+        keyFiles.filter((file) => file.category === "principles_guidelines").map((file) => file.path),
+      ),
+    },
+    openQuestions: [],
+    lastReseedReason: "initial_missing",
+  };
 }

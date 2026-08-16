@@ -17,15 +17,14 @@ export async function generatePromptSuggestion(
   signal?: AbortSignal,
 ): Promise<SuggestionResult> {
   const runtime = resolveModelRuntime(provider, modelId);
-  const maxOutputTokens = Math.min(120, Math.max(32, Math.ceil(maxSuggestionChars / 2) + 16));
+  const maxOutputTokens = Math.min(64, Math.max(24, Math.ceil(maxSuggestionChars / 3) + 8));
 
   try {
     const { text, usage } = await generateText({
       model: runtime.model,
       abortSignal: signal,
-      temperature: 0.3,
+      temperature: 0,
       ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens }),
-      ...(runtime.providerOptions ? { providerOptions: runtime.providerOptions } : {}),
       system: SYSTEM_PROMPT,
       prompt,
     });

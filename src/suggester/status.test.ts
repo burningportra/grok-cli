@@ -7,7 +7,7 @@ describe("formatSuggesterStatus", () => {
   it("reports off and empty history", () => {
     const text = formatSuggesterStatus({ ...DEFAULT_SUGGESTER_SETTINGS, enabled: false }, emptySessionState());
     expect(text).toContain("Prompt suggester: off");
-    expect(text).toContain("Fill: auto");
+    expect(text).toContain("Fill: ghost");
     expect(text).toContain("Last suggestion: none yet this session");
   });
 

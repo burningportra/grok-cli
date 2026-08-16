@@ -1,5 +1,5 @@
 import { resolve } from "path";
-import { hashFile, loadSeed, type ReseedTrigger, type SeedArtifact } from "./seed.js";
+import { BOOTSTRAP_GENERATOR_VERSION, hashFile, loadSeed, type ReseedTrigger, type SeedArtifact } from "./seed.js";
 
 export interface StalenessResult {
   stale: boolean;
@@ -9,6 +9,13 @@ export interface StalenessResult {
 export function checkSeedStaleness(cwd: string, seed: SeedArtifact | null = loadSeed(cwd)): StalenessResult {
   if (!seed) {
     return { stale: true, trigger: { reason: "initial_missing", changedFiles: [] } };
+  }
+
+  if (seed.generatorVersion === BOOTSTRAP_GENERATOR_VERSION) {
+    return {
+      stale: true,
+      trigger: { reason: "initial_missing", changedFiles: seed.keyFiles.map((file) => file.path) },
+    };
   }
 
   const changed: string[] = [];

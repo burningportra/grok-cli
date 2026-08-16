@@ -7,10 +7,10 @@ describe("resolveSuggesterSettings", () => {
     expect(resolveSuggesterSettings({})).toMatchObject({
       enabled: true,
       model: "grok-3-mini",
-      seederModel: "grok-4.20-non-reasoning",
+      seederModel: "grok-3-mini",
       ghostAcceptKeys: ["space", "right"],
       fastPathContinueOnError: true,
-      autoAccept: true,
+      autoAccept: false,
     });
   });
 

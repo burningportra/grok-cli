@@ -3,17 +3,17 @@ import { loadUserSettings, saveUserSettings } from "../utils/settings.js";
 import type { GhostAcceptKey, ResolvedSuggesterSettings, SuggesterSettings } from "./types.js";
 
 export const DEFAULT_SUGGESTER_MODEL = "grok-3-mini";
-export const DEFAULT_SEEDER_MODEL = "grok-4.20-non-reasoning";
+export const DEFAULT_SEEDER_MODEL = "grok-3-mini";
 export const NO_SUGGESTION_TOKEN = "[no suggestion]";
-export const DEFAULT_RESEED_TURN_INTERVAL = 10;
-export const DEFAULT_MAX_SUGGESTION_CHARS = 200;
-export const DEFAULT_MAX_ASSISTANT_TURN_CHARS = 8_000;
-export const DEFAULT_MAX_RECENT_USER_PROMPTS = 20;
-export const DEFAULT_MAX_RECENT_USER_PROMPT_CHARS = 500;
-export const DEFAULT_MAX_TOOL_SIGNALS = 8;
-export const DEFAULT_MAX_TOOL_SIGNAL_CHARS = 240;
-export const DEFAULT_MAX_TOUCHED_FILES = 8;
-export const DEFAULT_MAX_UNRESOLVED_QUESTIONS = 6;
+export const DEFAULT_RESEED_TURN_INTERVAL = 16;
+export const DEFAULT_MAX_SUGGESTION_CHARS = 140;
+export const DEFAULT_MAX_ASSISTANT_TURN_CHARS = 1_600;
+export const DEFAULT_MAX_RECENT_USER_PROMPTS = 6;
+export const DEFAULT_MAX_RECENT_USER_PROMPT_CHARS = 220;
+export const DEFAULT_MAX_TOOL_SIGNALS = 4;
+export const DEFAULT_MAX_TOOL_SIGNAL_CHARS = 140;
+export const DEFAULT_MAX_TOUCHED_FILES = 5;
+export const DEFAULT_MAX_UNRESOLVED_QUESTIONS = 3;
 
 export const DEFAULT_SUGGESTER_SETTINGS: ResolvedSuggesterSettings = {
   enabled: true,
@@ -22,7 +22,7 @@ export const DEFAULT_SUGGESTER_SETTINGS: ResolvedSuggesterSettings = {
   maxSuggestionChars: DEFAULT_MAX_SUGGESTION_CHARS,
   ghostAcceptKeys: ["space", "right"],
   fastPathContinueOnError: true,
-  autoAccept: true,
+  autoAccept: false,
   customInstruction: "",
   reseedEnabled: true,
   reseedTurnInterval: DEFAULT_RESEED_TURN_INTERVAL,
@@ -47,7 +47,7 @@ export function resolveSuggesterSettings(raw?: SuggesterSettings): ResolvedSugge
     maxSuggestionChars: maxChars,
     ghostAcceptKeys: normalizeGhostAcceptKeys(raw?.ghostAcceptKeys),
     fastPathContinueOnError: raw?.fastPathContinueOnError !== false,
-    autoAccept: raw?.autoAccept !== false,
+    autoAccept: raw?.autoAccept === true,
     customInstruction: typeof raw?.customInstruction === "string" ? raw.customInstruction : "",
     reseedEnabled: raw?.reseedEnabled !== false,
     reseedTurnInterval:

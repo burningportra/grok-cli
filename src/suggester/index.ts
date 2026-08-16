@@ -11,6 +11,7 @@ export {
 export { buildSuggestionContext } from "./context.js";
 export { finalizeSuggestionResult, normalizeSuggestion, shouldFastPathContinue } from "./engine.js";
 export { generatePromptSuggestion } from "./generate.js";
+export { handleSuggesterCommand } from "./handle-command.js";
 export { isGhostAcceptKey } from "./keys.js";
 export { renderSuggestionPrompt } from "./prompt.js";
 export { loadSeed } from "./seed.js";
