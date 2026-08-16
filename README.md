@@ -142,6 +142,18 @@ Use `/schedule` in the TUI to browse saved schedules. One-time schedules start
 immediately in the background; recurring schedules keep running as long as the
 daemon is active.
 
+**Next-prompt suggestions** — after each interactive turn, the TUI may ghost a
+likely next user prompt and inserts it into the empty editor. It also keeps a
+background project-intent seed and learns if you accept or rewrite suggestions.
+`Esc` clears an untouched fill. It never auto-sends. `/suggester reseed`
+refreshes the seed; `/suggester instruction set ...` adds a preference;
+`/suggester ghost` goes back to dim placeholder + `Space`. Headless `--prompt`
+mode is unchanged.
+
+This suggester is a port of
+[pi-prompt-suggester](https://github.com/guwidoe/pi-prompt-suggester)
+by **Guido Witt-Dörring** (MIT). See [`NOTICE.md`](./NOTICE.md).
+
 **List Grok models and pricing hints:**
 
 ```bash
@@ -181,6 +193,7 @@ You keep using a text model for the session, and Grok saves generated media unde
 | **Computer use**                  | Built-in `**computer`** sub-agent for host desktop automation via `**agent-desktop`**. It prefers semantic accessibility snapshots and stable refs, with screenshots saved under `**.grok/computer/**` when requested.     |
 | **Custom sub-agents**             | Define named agents with `**subAgents`** in `**~/.grok/user-settings.json`** and manage them from the TUI with `**/agents**`.                                                                                              |
 | **Remote control**                | Pair **Telegram** from the TUI (`/remote-control` → Telegram): DM your bot, `**/pair`**, approve the code in-terminal. Keep the CLI running while you ping it from your phone.                                             |
+| **Next-prompt suggestions**       | After each interactive turn, the TUI inserts a likely next user prompt using conversation context plus a background project-intent seed. `**/suggester**` for status/reseed/instruction. Never auto-sends.                 |
 | **No “mystery meat” UI**          | OpenTUI React terminal UI—fast, keyboard-driven, not whatever glitchy thing you’re thinking of.                                                                                                                            |
 | **Skills**                        | Agent Skills under `**.agents/skills/<name>/SKILL.md`** (project) or `**~/.agents/skills/`** (user). Use `**/skills**` in the TUI to list what’s installed.                                                                |
 | **MCPs**                          | Extend with Model Context Protocol servers—configure via `**/mcps`** in the TUI or `**.grok/settings.json`** (`mcpServers`).                                                                                               |
@@ -219,6 +232,18 @@ grok -k your_key_here
 
 ```json
 { "apiKey": "your_key_here" }
+```
+
+Optional `**suggester**` — next-prompt ghosts after each interactive turn (`enabled` defaults to `true`):
+
+```json
+{
+  "suggester": {
+    "enabled": true,
+    "model": "grok-3-mini",
+    "maxSuggestionChars": 200
+  }
+}
 ```
 
 Optional `**subAgents**` — custom foreground sub-agents. Each entry needs `**name**`, `**model**`, and `**instruction**`:

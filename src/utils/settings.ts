@@ -10,6 +10,7 @@ import type {
   LspSettings,
   NormalizedLspSettings,
 } from "../lsp/types";
+import type { SuggesterSettings } from "../suggester/types";
 import type { AgentMode, ReasoningEffort } from "../types/index";
 
 export type TelegramStreamingMode = "off" | "partial";
@@ -173,6 +174,7 @@ export interface UserSettings {
   hooks?: HooksConfig;
   payments?: PaymentSettings;
   modeModels?: Partial<Record<AgentMode, string>>;
+  suggester?: SuggesterSettings;
 }
 
 export interface ProjectSettings {
@@ -277,6 +279,15 @@ export function saveUserSettings(partial: Partial<UserSettings>): void {
               ...current.payments?.approval,
               ...partial.payments?.approval,
             },
+          },
+        }
+      : {}),
+    ...(partial.suggester !== undefined
+      ? {
+          suggester: {
+            ...current.suggester,
+            ...partial.suggester,
+            ...(partial.suggester.model !== undefined ? { model: normalizeModelId(partial.suggester.model) } : {}),
           },
         }
       : {}),

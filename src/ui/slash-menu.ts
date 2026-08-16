@@ -23,6 +23,7 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
   { id: "verify", label: "verify", description: "Run local verification" },
   { id: "skills", label: "skills", description: "Manage skills" },
   { id: "btw", label: "btw", description: "Ask a side question without interrupting" },
+  { id: "suggester", label: "suggester", description: "Next-prompt suggestions and project seed" },
   { id: "update", label: "update", description: "Update grok to the latest version" },
 ];
 

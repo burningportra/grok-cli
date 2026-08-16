@@ -16,6 +16,7 @@ import {
 import { POPULAR_MCP_CATALOG } from "../mcp/catalog";
 import { parseEnvLines, parseHeaderLines } from "../mcp/parse-headers";
 import { toMcpServerId, validateMcpServerConfig } from "../mcp/validate";
+import { parseSuggesterCommand, suggesterUsageText } from "../suggester/command.js";
 import { createTelegramBridge, type TelegramBridgeHandle } from "../telegram/bridge";
 import { approvePairingCode } from "../telegram/pairing";
 import { createTurnCoordinator } from "../telegram/turn-coordinator";
@@ -70,7 +71,9 @@ import {
   SubagentsBrowserModal,
 } from "./agents-modal";
 import { BtwOverlay, type BtwState } from "./components/btw-overlay.js";
+import { GhostPromptHint } from "./components/GhostPromptHint.js";
 import { SuggestionOverlay } from "./components/SuggestionOverlay.js";
+import { usePromptSuggester } from "./hooks/usePromptSuggester.js";
 import { type TypeaheadState, useTypeahead } from "./hooks/useTypeahead.js";
 import { Markdown } from "./markdown";
 import { buildMcpBrowseRows, McpBrowserModal, McpEditorModal } from "./mcp-modal";
@@ -351,6 +354,7 @@ const BUILTIN_TYPED_SLASH_COMMANDS = new Set([
   "/commit-pr",
   "/wallet",
   "/btw",
+  "/suggester",
 ]);
 
 interface SandboxRow {
@@ -777,6 +781,13 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const typeahead = useTypeahead(inputRef, fileIndexRef.current, handleFileAccept);
   const typeaheadRef = useRef(typeahead);
   typeaheadRef.current = typeahead;
+  const promptSuggester = usePromptSuggester(inputRef, agent.getCwd(), sessionId, startupConfig.baseURL);
+  const promptSuggesterRef = useRef(promptSuggester);
+  promptSuggesterRef.current = promptSuggester;
+  useEffect(() => {
+    if (!sessionId) return;
+    promptSuggesterRef.current.ensureSeed();
+  }, [sessionId]);
 
   const setMode = useCallback(
     (m: AgentMode) => {
@@ -1563,6 +1574,15 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
       }
 
+      if (activeTurn.kind === "local" && queuedMessagesRef.current.length === 0) {
+        const status = wasInterrupted ? "aborted" : hadError ? "error" : "success";
+        promptSuggesterRef.current.requestAfterTurn(
+          activeTurn.agent.getChatEntries(),
+          status,
+          wasInterrupted ? "User interrupted the previous turn." : undefined,
+        );
+      }
+
       activeTurnRef.current = null;
       clearLiveTurnUi();
       finishTurnProcessing();
@@ -2041,6 +2061,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     replacePasteBlocks([]);
     queuedMessagesRef.current = [];
     setQueuedMessages([]);
+    promptSuggesterRef.current.cancel();
+    promptSuggesterRef.current.dismiss();
   }, [agent, clearLiveTurnUi, replacePasteBlocks]);
 
   const processMessage = useCallback(
@@ -2050,6 +2072,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       const isStale = () => activeRunIdRef.current !== runId;
       isProcessingRef.current = true;
       setIsProcessing(true);
+      promptSuggesterRef.current.cancel();
       if (!sessionTitle)
         agent
           .generateTitle((displayText ?? text).trim())
@@ -2274,6 +2297,91 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         processMessage(COMMIT_PR_PROMPT);
         return true;
       }
+      const suggesterCommand = parseSuggesterCommand(cmd);
+      if (suggesterCommand) {
+        const action = suggesterCommand.action;
+        const rest = suggesterCommand.rest;
+        if (action === "help") {
+          setMessages((prev) => [...prev, buildAssistantEntry(suggesterUsageText())]);
+          return true;
+        }
+        if (action === "on") {
+          promptSuggesterRef.current.setEnabled(true);
+          setMessages((prev) => [...prev, buildAssistantEntry("Prompt suggester enabled.")]);
+          return true;
+        }
+        if (action === "off") {
+          promptSuggesterRef.current.setEnabled(false);
+          setMessages((prev) => [...prev, buildAssistantEntry("Prompt suggester disabled.")]);
+          return true;
+        }
+        if (action === "auto") {
+          promptSuggesterRef.current.setAutoAccept(true);
+          setMessages((prev) => [...prev, buildAssistantEntry("Prompt suggester will insert the next prompt.")]);
+          return true;
+        }
+        if (action === "ghost") {
+          promptSuggesterRef.current.setAutoAccept(false);
+          setMessages((prev) => [
+            ...prev,
+            buildAssistantEntry("Prompt suggester will show a dim ghost. Space accepts."),
+          ]);
+          return true;
+        }
+        if (action === "reseed") {
+          promptSuggesterRef.current.requestReseed();
+          setMessages((prev) => [...prev, buildAssistantEntry("Suggester reseed queued.")]);
+          return true;
+        }
+        if (action === "instruction") {
+          const [verb, ...instructionParts] = rest.split(/\s+/);
+          if (!verb || verb.toLowerCase() === "show") {
+            const status = promptSuggesterRef.current.formatStatus();
+            setMessages((prev) => [...prev, buildAssistantEntry(status)]);
+            return true;
+          }
+          if (verb.toLowerCase() === "clear") {
+            promptSuggesterRef.current.setCustomInstruction("");
+            setMessages((prev) => [...prev, buildAssistantEntry("Suggester instruction cleared.")]);
+            return true;
+          }
+          const text = (verb.toLowerCase() === "set" ? instructionParts.join(" ") : rest).trim();
+          if (!text) {
+            setMessages((prev) => [...prev, buildAssistantEntry("Usage: /suggester instruction set <text>")]);
+            return true;
+          }
+          promptSuggesterRef.current.setCustomInstruction(text);
+          setMessages((prev) => [...prev, buildAssistantEntry("Suggester instruction saved.")]);
+          return true;
+        }
+        if (action === "model") {
+          const [verb, ...modelParts] = rest.split(/\s+/);
+          if (!verb || verb.toLowerCase() === "show") {
+            setMessages((prev) => [...prev, buildAssistantEntry(promptSuggesterRef.current.formatStatus())]);
+            return true;
+          }
+          if (verb.toLowerCase() === "seeder") {
+            const model = modelParts.join(" ").trim();
+            if (!model) {
+              setMessages((prev) => [...prev, buildAssistantEntry("Usage: /suggester model seeder <id>")]);
+              return true;
+            }
+            promptSuggesterRef.current.setSeederModel(model);
+            setMessages((prev) => [...prev, buildAssistantEntry(`Seeder model set to ${model}.`)]);
+            return true;
+          }
+          const model = (verb.toLowerCase() === "set" ? modelParts.join(" ") : rest).trim();
+          if (!model) {
+            setMessages((prev) => [...prev, buildAssistantEntry("Usage: /suggester model set <id>")]);
+            return true;
+          }
+          promptSuggesterRef.current.setSuggesterModel(model);
+          setMessages((prev) => [...prev, buildAssistantEntry(`Suggester model set to ${model}.`)]);
+          return true;
+        }
+        setMessages((prev) => [...prev, buildAssistantEntry(promptSuggesterRef.current.formatStatus())]);
+        return true;
+      }
       if (c.startsWith("/btw ") || c === "/btw") {
         const question = cmd.trim().slice(4).trim();
         if (!question) {
@@ -2409,6 +2517,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           break;
         case "commit-pr":
           processMessage(COMMIT_PR_PROMPT);
+          break;
+        case "suggester":
+          setMessages((prev) => [...prev, buildAssistantEntry(promptSuggesterRef.current.formatStatus())]);
           break;
         case "btw":
           inputRef.current?.clear();
@@ -3256,6 +3367,18 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           return;
         }
       }
+      const ghostBlocked =
+        isProcessing ||
+        showSlashMenu ||
+        showModelPicker ||
+        showSandboxPicker ||
+        showWalletPicker ||
+        showPlanPanel ||
+        showApiKeyModal ||
+        blockPrompt;
+      if (promptSuggesterRef.current.handleKey(key, ghostBlocked)) {
+        return;
+      }
       if (key.name === "tab" && !isProcessing) {
         cycleMode();
         return;
@@ -3325,6 +3448,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       pendingPaymentApproval,
       processMessage,
       showWalletPicker,
+      showApiKeyModal,
+      blockPrompt,
       walletSettings,
       walletFocusIndex,
       walletDisplayInfo,
@@ -3402,6 +3527,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       return;
     }
     if (handleCommand(message)) return;
+    promptSuggesterRef.current.recordSubmit(displayText);
     const { enhancedMessage } = processAtMentions(message.trim(), agent.getCwd());
     if (isProcessingRef.current) {
       queuedMessagesRef.current.push({ text: enhancedMessage, displayText });
@@ -3510,6 +3636,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
                 queuedCount={queuedMessages.length}
                 queuedMessages={queuedMessages}
                 typeahead={typeahead}
+                ghostSuggestion={promptSuggester.suggestion}
+                ghostVisible={promptSuggester.visible}
               />
             </box>
           </box>
@@ -3549,6 +3677,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
                 contextStats={contextStats}
                 placeholder={"What are we building?"}
                 typeahead={typeahead}
+                ghostSuggestion={promptSuggester.suggestion}
+                ghostVisible={promptSuggester.visible}
               />
             </box>
             <box height={2} minHeight={0} flexShrink={1} />
@@ -3841,6 +3971,8 @@ function PromptBox({
   queuedCount,
   queuedMessages,
   typeahead,
+  ghostSuggestion,
+  ghostVisible,
 }: {
   t: Theme;
   inputRef: React.RefObject<TextareaRenderable | null>;
@@ -3863,9 +3995,14 @@ function PromptBox({
   queuedCount?: number;
   queuedMessages?: string[];
   typeahead?: TypeaheadState;
+  ghostSuggestion?: string | null;
+  ghostVisible?: boolean;
 }) {
   const hasQueue = (queuedMessages?.length ?? 0) > 0;
   const showSuggestions = typeahead?.visible ?? false;
+  const showGhost = Boolean(
+    ghostVisible && ghostSuggestion && !hasQueue && !isProcessing && !showSlashMenu && !showSuggestions,
+  );
 
   return (
     <box backgroundColor={t.backgroundPanel}>
@@ -3926,7 +4063,13 @@ function PromptBox({
                 !showApiKeyModal &&
                 !blockPrompt
               }
-              placeholder={isProcessing ? "Queue a follow-up... (esc to interrupt)" : placeholder || "Message Grok..."}
+              placeholder={
+                isProcessing
+                  ? "Queue a follow-up... (esc to interrupt)"
+                  : showGhost && ghostSuggestion
+                    ? ghostSuggestion
+                    : placeholder || "Message Grok..."
+              }
               textColor={t.text}
               backgroundColor={t.backgroundElement}
               placeholderColor={t.textMuted}
@@ -3980,6 +4123,8 @@ function PromptBox({
                 <span style={{ fg: t.textMuted }}>{"dismiss"}</span>
               </text>
             </box>
+          ) : showGhost ? (
+            <GhostPromptHint t={t} visible />
           ) : (
             <>
               <text fg={t.text}>

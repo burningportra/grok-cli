@@ -11,7 +11,8 @@
     }
   },
   "bin": {
-    "grok": "dist/index.js"
+    "grok": "dist/index.js",
+    "grok-dev": "dist/index.js"
   },
   "scripts": {
     "dev": "bun run src/index.ts",

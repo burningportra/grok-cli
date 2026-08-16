@@ -21,4 +21,9 @@ describe("filterSlashMenuItems", () => {
   it("finds the recaps command from singular aliases", () => {
     expect(filterSlashMenuItems(SLASH_MENU_ITEMS, "recap")[0]?.id).toBe("recaps");
   });
+
+  it("finds the suggester command", () => {
+    expect(filterSlashMenuItems(SLASH_MENU_ITEMS, "/suggester")[0]?.id).toBe("suggester");
+    expect(filterSlashMenuItems(SLASH_MENU_ITEMS, "suggest")[0]?.id).toBe("suggester");
+  });
 });
