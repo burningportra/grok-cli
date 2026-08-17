@@ -1,6 +1,7 @@
-import { BUNDLED_PLUGINS, getBundledPlugin } from "./catalog.js";
+import { BUNDLED_PLUGINS, DEFAULT_INSTALLED_PLUGINS, getBundledPlugin } from "./catalog.js";
 
 export function normalizeInstalledPlugins(raw: unknown): string[] {
+  if (raw === undefined) return [...DEFAULT_INSTALLED_PLUGINS];
   if (!Array.isArray(raw)) return [];
   const known = new Set(BUNDLED_PLUGINS.map((plugin) => plugin.id));
   return [...new Set(raw.filter((id): id is string => typeof id === "string" && known.has(id)))];

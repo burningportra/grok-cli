@@ -37,4 +37,13 @@ describe("filterSlashMenuItems", () => {
     const ids = filterSlashMenuItems(SLASH_MENU_ITEMS, "session").map((item) => item.id);
     expect(ids.indexOf("resume")).toBeLessThan(ids.indexOf("new"));
   });
+
+  it("finds the fast command from the priority alias", () => {
+    expect(filterSlashMenuItems(SLASH_MENU_ITEMS, "/fast")[0]?.id).toBe("fast");
+    expect(filterSlashMenuItems(SLASH_MENU_ITEMS, "priority")[0]?.id).toBe("fast");
+  });
+
+  it("finds the effort command", () => {
+    expect(filterSlashMenuItems(SLASH_MENU_ITEMS, "/effort")[0]?.id).toBe("effort");
+  });
 });

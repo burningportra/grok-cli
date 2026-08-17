@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  cycleReasoningEffort,
   DEFAULT_MODEL,
   getEffectiveReasoningEffort,
   getModelInfo,
   getSupportedReasoningEfforts,
   normalizeModelId,
+  parseReasoningEffort,
 } from "./models";
 
 describe("models", () => {
@@ -33,11 +35,25 @@ describe("models", () => {
 
   it("reports supported reasoning-effort levels", () => {
     expect(getSupportedReasoningEfforts("grok-3-mini")).toEqual(["low", "high"]);
+    expect(getSupportedReasoningEfforts("grok-4.6")).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(getSupportedReasoningEfforts("grok-4.5")).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(getSupportedReasoningEfforts("grok-4.3")).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(getSupportedReasoningEfforts("grok-4.20-0309-reasoning")).toEqual(["low", "medium", "high", "xhigh"]);
     expect(getSupportedReasoningEfforts("grok-4.20-multi-agent-0309")).toEqual([]);
-    expect(getSupportedReasoningEfforts("grok-4.3")).toEqual([]);
     expect(getSupportedReasoningEfforts("grok-4.20-non-reasoning")).toEqual([]);
-    expect(getSupportedReasoningEfforts("grok-code-fast-1")).toEqual([]);
+    expect(getSupportedReasoningEfforts("grok-code-fast-1")).toEqual(["low", "medium", "high", "xhigh"]);
     expect(getSupportedReasoningEfforts("grok-3")).toEqual([]);
+  });
+
+  it("parses and cycles reasoning effort", () => {
+    expect(parseReasoningEffort("XHIGH")).toBe("xhigh");
+    expect(parseReasoningEffort("nope")).toBeUndefined();
+    expect(cycleReasoningEffort("grok-4.6")).toBe("low");
+    expect(cycleReasoningEffort("grok-4.6", "low")).toBe("medium");
+    expect(cycleReasoningEffort("grok-4.6", "xhigh")).toBeUndefined();
+    expect(cycleReasoningEffort("grok-3-mini", "low")).toBe("high");
+    expect(cycleReasoningEffort("grok-3-mini", "high")).toBeUndefined();
+    expect(cycleReasoningEffort("grok-4.20-non-reasoning")).toBeUndefined();
   });
 
   it("resolves effective reasoning effort with defaults and overrides", () => {
@@ -46,7 +62,9 @@ describe("models", () => {
     expect(getEffectiveReasoningEffort("grok-3-mini", "low")).toBe("low");
     expect(getEffectiveReasoningEffort("grok-4.20-multi-agent-0309")).toBeUndefined();
     expect(getEffectiveReasoningEffort("grok-4.20-multi-agent-0309", "high")).toBeUndefined();
-    expect(getEffectiveReasoningEffort("grok-4.3")).toBeUndefined();
-    expect(getEffectiveReasoningEffort("grok-code-fast-1", "high")).toBeUndefined();
+    expect(getEffectiveReasoningEffort("grok-4.6", "xhigh")).toBe("xhigh");
+    expect(getEffectiveReasoningEffort("grok-4.3", "medium")).toBe("medium");
+    expect(getEffectiveReasoningEffort("grok-code-fast-1", "high")).toBe("high");
+    expect(getEffectiveReasoningEffort("grok-4.20-non-reasoning", "high")).toBeUndefined();
   });
 });

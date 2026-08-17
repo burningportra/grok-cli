@@ -36,6 +36,9 @@ const RESERVED_COMMANDS = new Set([
   "skills",
   "update",
   "new",
+  "fast",
+  "priority",
+  "effort",
   ...BUNDLED_PLUGINS.flatMap((plugin) => [plugin.id, ...plugin.commands]),
 ]);
 

@@ -73,12 +73,23 @@ grok -p "show me package.json" --directory /path/to/project
 grok --prompt "refactor X" --max-tool-rounds 30
 grok --prompt "summarize the repo state" --format json
 grok --prompt "review the repo overnight" --batch-api
+grok --prompt "fix the flaky test" --fast --effort low
 grok --verify
 ```
 
 `--batch-api` uses xAI's Batch API for lower-cost unattended runs. It is a good
 fit for scripts, CI, schedules, and other non-interactive workflows where a
 delayed result is fine.
+
+`--fast` turns on xAI Fast Mode for this process (`service_tier: "priority"`,
+2x rates). `--no-fast` forces it off. Inside the TUI, `/fast` toggles it and
+persists `fastMode` in `~/.grok/user-settings.json`. Fast Mode is queue
+priority, not thinking depth.
+
+`--effort low|medium|high|xhigh` sets reasoning effort for this process only.
+Inside the TUI, `/effort` opens a picker (left/right to cycle). `/effort high`
+sets a level immediately. That choice is stored per model in
+`reasoningEffortByModel`. Unset means the API default (`high` on grok-4.6).
 
 **Continue a saved session:**
 
@@ -222,7 +233,7 @@ You keep using a text model for the session, and Grok saves generated media unde
 | **Computer use**                  | Built-in `**computer`** sub-agent for host desktop automation via `**agent-desktop`**. It prefers semantic accessibility snapshots and stable refs, with screenshots saved under `**.grok/computer/**` when requested.     |
 | **Custom sub-agents**             | Define named agents with `**subAgents`** in `**~/.grok/user-settings.json`** and manage them from the TUI with `**/agents**`.                                                                                              |
 | **Remote control**                | Pair **Telegram** from the TUI (`/remote-control` → Telegram): DM your bot, `**/pair`**, approve the code in-terminal. Keep the CLI running while you ping it from your phone.                                             |
-| **Next-prompt suggestions**       | Bundled plugin. `/install suggester`, then the TUI ghosts a likely next prompt after each turn. `/suggester` for status/reseed/instruction. Never auto-sends.                                                               |
+| **Next-prompt suggestions**       | Bundled plugin, on by default. The TUI ghosts a likely next prompt after each turn. `/suggester` for status/reseed/instruction, `/uninstall suggester` to turn it off. Never auto-sends.                                    |
 | **No “mystery meat” UI**          | OpenTUI React terminal UI—fast, keyboard-driven, not whatever glitchy thing you’re thinking of.                                                                                                                            |
 | **Skills**                        | Agent Skills under `**.agents/skills/<name>/SKILL.md`** (project) or `**~/.agents/skills/`** (user). Use `**/skills**` in the TUI to list what’s installed.                                                                |
 | **MCPs**                          | Extend with Model Context Protocol servers—configure via `**/mcps`** in the TUI or `**.grok/settings.json`** (`mcpServers`).                                                                                               |
@@ -263,8 +274,8 @@ grok -k your_key_here
 { "apiKey": "your_key_here" }
 ```
 
-Optional `**suggester**` — next-prompt ghosts after `/install suggester`.
-`enabled` still defaults to `true` once the plugin is installed:
+Optional `**suggester**` — next-prompt ghosts are on by default. `/uninstall suggester`
+turns the plugin off; `enabled: false` keeps it installed but silent:
 
 ```json
 {
@@ -292,7 +303,18 @@ Optional `**subAgents**` — custom foreground sub-agents. Each entry needs `**n
 
 Names cannot be `general`, `explore`, `vision`, `verify`, or `computer` because those are reserved for the built-in sub-agents.
 
-Optional: `**GROK_BASE_URL**` (default `https://api.x.ai/v1`), `**GROK_MODEL**`, `**GROK_MAX_TOKENS**`.
+Optional: `**GROK_BASE_URL**` (default `https://api.x.ai/v1`), `**GROK_MODEL**`, `**GROK_MAX_TOKENS**`, `**GROK_FAST**` (`1`/`true`/`on` enables Fast Mode for the process).
+
+Optional `**fastMode**` and per-model effort in `~/.grok/user-settings.json`:
+
+```json
+{
+  "fastMode": false,
+  "reasoningEffortByModel": {
+    "grok-4.6": "high"
+  }
+}
+```
 
 ---
 
@@ -500,6 +522,8 @@ If you're on Intel Mac or Linux, sandbox mode is not available. Use standard mod
 **Slow response times**
 
 - Check your network connection to x.ai API
+- Turn on Fast Mode with `/fast` or `--fast` (2x rates, priority processing)
+- Lower thinking depth with `/effort low` on reasoning models
 - Try `grok-4.20-non-reasoning` for non-reasoning workloads
 - Reduce `--max-tool-rounds` for headless runs
 

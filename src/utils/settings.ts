@@ -178,6 +178,7 @@ export interface UserSettings {
   modeModels?: Partial<Record<AgentMode, string>>;
   suggester?: SuggesterSettings;
   plugins?: string[];
+  fastMode?: boolean;
 }
 
 export interface ProjectSettings {
@@ -612,21 +613,61 @@ export function getCurrentLspSettings(): NormalizedLspSettings {
   return mergeLspSettings(user.lsp, project.lsp);
 }
 
-export function getReasoningEffortForModel(modelId: string): ReasoningEffort | undefined {
-  const normalizedModelId = normalizeModelId(modelId);
-  const savedEfforts = loadUserSettings().reasoningEffortByModel ?? {};
-  const effort =
-    savedEfforts[normalizedModelId] ??
-    Object.entries(savedEfforts).find(([savedModelId]) => normalizeModelId(savedModelId) === normalizedModelId)?.[1];
-  return getEffectiveReasoningEffort(normalizedModelId, effort);
-}
-
 export function loadRecapsEnabled(): boolean {
   return loadUserSettings().recapsEnabled !== false;
 }
 
 export function saveRecapsEnabled(enabled: boolean): void {
   saveUserSettings({ recapsEnabled: enabled });
+}
+
+let processFastModeOverride: boolean | undefined;
+let processReasoningEffortOverride: ReasoningEffort | undefined;
+
+function parseBooleanFlag(value: string | undefined): boolean | undefined {
+  if (value == null) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes") return true;
+  if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no") return false;
+  return undefined;
+}
+
+export function setProcessFastModeOverride(enabled: boolean | undefined): void {
+  processFastModeOverride = enabled;
+}
+
+export function loadSavedFastMode(): boolean {
+  return loadUserSettings().fastMode === true;
+}
+
+export function saveFastMode(enabled: boolean): void {
+  saveUserSettings({ fastMode: enabled });
+}
+
+export function resolveFastMode(): boolean {
+  if (processFastModeOverride !== undefined) return processFastModeOverride;
+  const fromEnv = parseBooleanFlag(process.env.GROK_FAST);
+  if (fromEnv !== undefined) return fromEnv;
+  return loadSavedFastMode();
+}
+
+export function setProcessReasoningEffortOverride(effort: ReasoningEffort | undefined): void {
+  processReasoningEffortOverride = effort;
+}
+
+export function getProcessReasoningEffortOverride(): ReasoningEffort | undefined {
+  return processReasoningEffortOverride;
+}
+
+export function getReasoningEffortForModel(modelId: string): ReasoningEffort | undefined {
+  const normalizedModelId = normalizeModelId(modelId);
+  const processOverride = getEffectiveReasoningEffort(normalizedModelId, processReasoningEffortOverride);
+  if (processOverride) return processOverride;
+  const savedEfforts = loadUserSettings().reasoningEffortByModel ?? {};
+  const effort =
+    savedEfforts[normalizedModelId] ??
+    Object.entries(savedEfforts).find(([savedModelId]) => normalizeModelId(savedModelId) === normalizedModelId)?.[1];
+  return getEffectiveReasoningEffort(normalizedModelId, effort);
 }
 
 export function getTelegramBotToken(): string | undefined {

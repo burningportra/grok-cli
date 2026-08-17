@@ -129,24 +129,21 @@ describe("client", () => {
         });
       });
 
-      it("does not include providerOptions for retired reasoning aliases even when effort is configured", () => {
-        vi.spyOn(settings, "getReasoningEffortForModel").mockReturnValue("high");
-        const runtime = resolveModelRuntime(mockProvider, "grok-4-0709");
-        expect(runtime.modelId).toBe("grok-4.3");
-        expect(runtime.providerOptions).toBeUndefined();
-      });
-
-      it("does not include providerOptions for retired code aliases even when effort is configured", () => {
-        vi.spyOn(settings, "getReasoningEffortForModel").mockReturnValue("high");
-        const runtime = resolveModelRuntime(mockProvider, "grok-code-fast-1");
-        expect(runtime.modelId).toBe("grok-4.3");
-        expect(runtime.providerOptions).toBeUndefined();
-      });
-
-      it("does not include providerOptions for grok-4.3 even when effort is configured", () => {
+      it("includes SDK-safe providerOptions for grok-4.3 when high effort is configured", () => {
         vi.spyOn(settings, "getReasoningEffortForModel").mockReturnValue("high");
         const runtime = resolveModelRuntime(mockProvider, "grok-4.3");
         expect(runtime.modelId).toBe("grok-4.3");
+        expect(runtime.providerOptions).toEqual({
+          xai: {
+            reasoningEffort: "high",
+          },
+        });
+      });
+
+      it("does not pass medium or xhigh through SDK providerOptions", () => {
+        vi.spyOn(settings, "getReasoningEffortForModel").mockReturnValue("xhigh");
+        const runtime = resolveModelRuntime(mockProvider, "grok-4.6");
+        expect(runtime.modelId).toBe("grok-4.6");
         expect(runtime.providerOptions).toBeUndefined();
       });
     });

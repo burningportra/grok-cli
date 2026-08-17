@@ -20,14 +20,25 @@ export function buildStatusBarLeft(input: { cwd: string; homeDir: string; sandbo
   return segments;
 }
 
+export function formatModelStatusName(modelName: string, effortLabel?: string): string {
+  if (!modelName) return "";
+  return effortLabel ? `${modelName} [${effortLabel}]` : modelName;
+}
+
 export function buildStatusBarRight(input: {
   modelName: string;
   contextLabel?: string;
   version?: string;
+  fastMode?: boolean;
+  effortLabel?: string;
 }): StatusSegment[] {
   const segments: StatusSegment[] = [];
-  if (input.modelName) {
-    segments.push({ text: input.modelName, tone: "normal" });
+  const modelLabel = formatModelStatusName(input.modelName, input.effortLabel);
+  if (modelLabel) {
+    segments.push({ text: modelLabel, tone: "normal" });
+  }
+  if (input.fastMode) {
+    segments.push({ text: "fast", tone: "accent" });
   }
   if (input.contextLabel) {
     segments.push({ text: input.contextLabel, tone: "muted" });

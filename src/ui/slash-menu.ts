@@ -15,6 +15,8 @@ export const SLASH_MENU_ITEMS: SlashMenuItem[] = [
   { id: "sandbox", label: "sandbox", description: "Select shell sandbox mode" },
   { id: "wallet", label: "wallet", description: "Wallet and payment settings" },
   { id: "models", label: "models", description: "Select a model", aliases: ["model", "mode"] },
+  { id: "fast", label: "fast", description: "Toggle Fast Mode (2x priority processing)", aliases: ["priority"] },
+  { id: "effort", label: "effort", description: "Open the reasoning-effort picker" },
   { id: "recaps", label: "recaps", description: "Turn session recaps on/off", aliases: ["recap", "summary"] },
   { id: "resume", label: "resume", description: "Resume a saved session", aliases: ["sessions", "session"] },
   { id: "new", label: "new session", description: "Start a new session" },

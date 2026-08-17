@@ -10,6 +10,7 @@ export const MODELS: ModelInfo[] = [
     reasoning: true,
     description: "Current flagship — long-horizon agents, self-verification, polished apps",
     aliases: ["grok-4.6-latest", "grok-4-6"],
+    supportsReasoningEffort: true,
   },
   {
     id: "grok-4.5",
@@ -20,6 +21,7 @@ export const MODELS: ModelInfo[] = [
     reasoning: true,
     description: "Strong coding/agentic model (Cursor-trained)",
     aliases: ["grok-4.5-latest", "grok-4-5"],
+    supportsReasoningEffort: true,
   },
   {
     id: "grok-4.3",
@@ -38,6 +40,7 @@ export const MODELS: ModelInfo[] = [
       "grok-code-fast-1",
       "grok-code-fast",
     ],
+    supportsReasoningEffort: true,
   },
   {
     id: "grok-4.20-multi-agent-0309",
@@ -63,6 +66,7 @@ export const MODELS: ModelInfo[] = [
     reasoning: true,
     description: "Grok 4.20 reasoning release",
     aliases: ["grok-4.20-beta-0309", "grok-4.20-beta", "grok-beta"],
+    supportsReasoningEffort: true,
   },
   {
     id: "grok-4.20-non-reasoning",
@@ -120,12 +124,32 @@ export function isKnownModelId(modelId: string): boolean {
   return !!getModelInfo(modelId);
 }
 
+export const FLAGSHIP_REASONING_EFFORTS: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
+export const MINI_REASONING_EFFORTS: ReasoningEffort[] = ["low", "high"];
+
 export function getSupportedReasoningEfforts(modelId: string): ReasoningEffort[] {
   const modelInfo = getModelInfo(modelId);
   if (!modelInfo?.supportsReasoningEffort) return [];
-  // Currently only grok-3-mini supports reasoning_effort per xAI docs
-  // It supports "low" and "high" efforts
-  return ["low", "high"];
+  if (modelInfo.id === "grok-3-mini") return [...MINI_REASONING_EFFORTS];
+  return [...FLAGSHIP_REASONING_EFFORTS];
+}
+
+export function parseReasoningEffort(value: string): ReasoningEffort | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "xhigh") {
+    return normalized;
+  }
+  return undefined;
+}
+
+export function cycleReasoningEffort(modelId: string, current?: ReasoningEffort): ReasoningEffort | undefined {
+  const supported = getSupportedReasoningEfforts(modelId);
+  if (supported.length === 0) return undefined;
+  if (!current) return supported[0];
+  const currentIndex = supported.indexOf(current);
+  if (currentIndex < 0) return supported[0];
+  if (currentIndex >= supported.length - 1) return undefined;
+  return supported[currentIndex + 1];
 }
 
 export function getEffectiveReasoningEffort(modelId: string, override?: ReasoningEffort): ReasoningEffort | undefined {

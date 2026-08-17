@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Fast Mode toggle (`/fast`, `--fast`, `GROK_FAST`) for xAI priority processing
+- Instant `/effort` command and `--effort` flag for reasoning depth
 - Dedicated grep tool powered by npm ripgrep WASM (#263)
 - `/btw` command for side questions (#264)
 - `/resume` command to switch to a saved workspace session from the TUI
@@ -15,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Up/down arrows cycle previous typed prompts
 
 ### Changed
+- Prompt suggester is enabled by default
 - Renamed the `grok-dev` CLI command to `grok-kev`
 - Branded this checkout as `grok-kev`
 - `grok` / `grok-kev` rebuild a source checkout automatically when `dist/` is stale

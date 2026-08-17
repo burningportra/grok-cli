@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildStatusBarLeft, buildStatusBarRight, compactHomePath } from "./status-bar";
+import { buildStatusBarLeft, buildStatusBarRight, compactHomePath, formatModelStatusName } from "./status-bar";
 
 describe("compactHomePath", () => {
   it("replaces a home directory prefix with ~", () => {
@@ -82,6 +82,20 @@ describe("buildStatusBarRight", () => {
       { text: "grok-4", tone: "normal" },
       { text: "12k/128k", tone: "muted" },
       { text: "1.2.3", tone: "muted" },
+    ]);
+  });
+
+  it("attaches effort to the model name and keeps fast as a badge", () => {
+    expect(formatModelStatusName("Grok 4.6", "auto")).toBe("Grok 4.6 [auto]");
+    expect(
+      buildStatusBarRight({
+        modelName: "Grok 4.6",
+        fastMode: true,
+        effortLabel: "low",
+      }),
+    ).toEqual([
+      { text: "Grok 4.6 [low]", tone: "normal" },
+      { text: "fast", tone: "accent" },
     ]);
   });
 

@@ -1,5 +1,6 @@
 import { generateText } from "ai";
 import { resolveModelRuntime, type XaiProvider } from "../grok/client.js";
+import { withoutLiveRequestOverrides } from "../grok/request-overrides.js";
 import { NO_SUGGESTION_TOKEN } from "./config.js";
 import type { SuggestionResult } from "./types.js";
 
@@ -20,14 +21,16 @@ export async function generatePromptSuggestion(
   const maxOutputTokens = Math.min(64, Math.max(24, Math.ceil(maxSuggestionChars / 3) + 8));
 
   try {
-    const { text, usage } = await generateText({
-      model: runtime.model,
-      abortSignal: signal,
-      temperature: 0,
-      ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens }),
-      system: SYSTEM_PROMPT,
-      prompt,
-    });
+    const { text, usage } = await withoutLiveRequestOverrides(() =>
+      generateText({
+        model: runtime.model,
+        abortSignal: signal,
+        temperature: 0,
+        ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens }),
+        system: SYSTEM_PROMPT,
+        prompt,
+      }),
+    );
 
     return {
       kind: "suggestion",

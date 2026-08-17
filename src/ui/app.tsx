@@ -41,6 +41,7 @@ import { copyTextToHostClipboard } from "../utils/host-clipboard";
 import {
   type CustomSubagentConfig,
   getApiKey,
+  getProcessReasoningEffortOverride,
   getTelegramBotToken,
   isReservedSubagentName,
   loadMcpServers,
@@ -51,14 +52,18 @@ import {
   type McpServerConfig,
   type PaymentChain,
   type PaymentSettings,
+  resolveFastMode,
   type SandboxMode,
   type SandboxSettings,
   saveApprovedTelegramUserId,
+  saveFastMode,
   saveMcpServers,
   savePaymentSettings,
   saveProjectSettings,
   saveRecapsEnabled,
   saveUserSettings,
+  setProcessFastModeOverride,
+  setProcessReasoningEffortOverride,
 } from "../utils/settings";
 import { discoverSkills, formatSkillsForChat } from "../utils/skills";
 import { formatSubagentName } from "../utils/subagent-display";
@@ -111,6 +116,21 @@ import {
   recordPrompt,
   savePromptHistory,
 } from "./prompt-history";
+import {
+  applyEffortCommand,
+  applyFastModeCommand,
+  describeEffortOption,
+  effortOptionToValue,
+  formatEffortConfirmation,
+  formatEffortHelp,
+  formatEffortOption,
+  formatFastModeConfirmation,
+  formatFastModeHelp,
+  getEffortOptions,
+  indexOfEffortOption,
+  parseEffortCommand,
+  parseFastModeCommand,
+} from "./runtime-toggles";
 import { buildScheduleBrowseRows, ScheduleBrowserModal } from "./schedule-modal";
 import { applySearchableListKey } from "./searchable-list";
 import { SearchableListOverlay } from "./searchable-list-overlay";
@@ -369,6 +389,9 @@ const BUILTIN_TYPED_SLASH_COMMANDS = new Set([
   "/sandbox",
   "/recap",
   "/recaps",
+  "/fast",
+  "/priority",
+  "/effort",
   "/remote-control",
   "/mcp",
   "/mcps",
@@ -679,6 +702,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const showModelPicker = hasFocus(focusStack, "model");
   const showSandboxPicker = hasFocus(focusStack, "sandbox");
   const showRecapPicker = hasFocus(focusStack, "recap");
+  const showEffortPicker = hasFocus(focusStack, "effort");
   const showWalletPicker = hasFocus(focusStack, "wallet");
   const showApiKeyModal = hasFocus(focusStack, "apiKey");
   const showConnectModal = hasFocus(focusStack, "connect");
@@ -702,6 +726,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const [sandboxSettingsEditing, setSandboxSettingsEditing] = useState<string | null>(null);
   const [sandboxSettingsEditBuffer, setSandboxSettingsEditBuffer] = useState("");
   const [recapsEnabled, setRecapsEnabledState] = useState(() => agent.getRecapsEnabled());
+  const [fastMode, setFastModeState] = useState(() => resolveFastMode());
   const [walletSettings, setWalletSettings] = useState<Required<PaymentSettings>>(() => loadPaymentSettings());
   const [walletFocusIndex, setWalletFocusIndex] = useState(0);
   const [walletDisplayInfo, setWalletDisplayInfo] = useState<WalletDisplayInfo>({
@@ -728,6 +753,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const [slashSearchQuery, setSlashSearchQuery] = useState("");
+  const [effortPickerIndex, setEffortPickerIndex] = useState(0);
   const [btwState, setBtwState] = useState<BtwState | null>(null);
   const btwAbortRef = useRef<AbortController | null>(null);
   const btwStateRef = useRef<BtwState | null>(null);
@@ -956,6 +982,12 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     openFocus("sandbox");
   }, [openFocus]);
 
+  const applyFastMode = useCallback((enabled: boolean) => {
+    setFastModeState(enabled);
+    setProcessFastModeOverride(enabled);
+    saveFastMode(enabled);
+  }, []);
+
   const applyRecapsEnabled = useCallback(
     (enabled: boolean) => {
       agent.setRecapsEnabled(enabled);
@@ -1007,6 +1039,21 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     saveUserSettings({ reasoningEffortByModel: next });
   }, []);
 
+  const applyModelEffort = useCallback(
+    (modelId: string, effort: ReasoningEffort | undefined) => {
+      const normalizedModelId = normalizeModelId(modelId);
+      const nextEfforts = { ...reasoningEffortByModel };
+      if (effort) {
+        nextEfforts[normalizedModelId] = effort;
+      } else {
+        delete nextEfforts[normalizedModelId];
+      }
+      setProcessReasoningEffortOverride(undefined);
+      setReasoningEfforts(nextEfforts);
+    },
+    [reasoningEffortByModel, setReasoningEfforts],
+  );
+
   const replacePasteBlocks = useCallback((next: PasteBlock[]) => {
     pasteBlocksRef.current = next;
     setPasteBlocks(next);
@@ -1015,10 +1062,18 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const getModelReasoningEffort = useCallback(
     (modelId: string): ReasoningEffort | undefined => {
       const normalizedModelId = normalizeModelId(modelId);
-      return getEffectiveReasoningEffort(normalizedModelId, reasoningEffortByModel[normalizedModelId]);
+      return getEffectiveReasoningEffort(
+        normalizedModelId,
+        getProcessReasoningEffortOverride() ?? reasoningEffortByModel[normalizedModelId],
+      );
     },
     [reasoningEffortByModel],
   );
+
+  const openEffortPicker = useCallback(() => {
+    setEffortPickerIndex(indexOfEffortOption(model, getModelReasoningEffort(model)));
+    openFocus("effort");
+  }, [getModelReasoningEffort, model, openFocus]);
 
   const adjustModelReasoningEffort = useCallback(
     (modelId: string, direction: -1 | 1) => {
@@ -1028,6 +1083,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
 
       const current = getModelReasoningEffort(normalizedModelId);
 
+      setProcessReasoningEffortOverride(undefined);
       if (!current) {
         if (direction > 0) {
           setReasoningEfforts({ ...reasoningEffortByModel, [normalizedModelId]: supported[0] });
@@ -2413,6 +2469,43 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         openRecapPicker();
         return true;
       }
+      const fastCommand = parseFastModeCommand(cmd);
+      if (fastCommand) {
+        if (fastCommand.action === "help") {
+          setMessages((prev) => [...prev, buildAssistantEntry(formatFastModeHelp())]);
+          return true;
+        }
+        const next = applyFastModeCommand(fastMode, fastCommand);
+        if (next != null) {
+          applyFastMode(next);
+          setMessages((prev) => [...prev, buildAssistantEntry(formatFastModeConfirmation(next))]);
+        }
+        return true;
+      }
+      const effortCommand = parseEffortCommand(cmd);
+      if (effortCommand) {
+        const supported = getSupportedReasoningEfforts(model);
+        if (supported.length === 0) {
+          setMessages((prev) => [...prev, buildAssistantEntry(formatEffortConfirmation(model, undefined))]);
+          return true;
+        }
+        if (effortCommand.action === "open") {
+          openEffortPicker();
+          return true;
+        }
+        if (effortCommand.action === "help") {
+          setMessages((prev) => [...prev, buildAssistantEntry(formatEffortHelp(model))]);
+          return true;
+        }
+        const next = applyEffortCommand(model, effortCommand);
+        if (next === null) {
+          setMessages((prev) => [...prev, buildAssistantEntry(formatEffortHelp(model))]);
+          return true;
+        }
+        applyModelEffort(model, next);
+        setMessages((prev) => [...prev, buildAssistantEntry(formatEffortConfirmation(model, next))]);
+        return true;
+      }
       if (c === "/wallet") {
         openWalletPicker();
         return true;
@@ -2542,6 +2635,11 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       openRecapPicker,
       openSandboxPicker,
       openWalletPicker,
+      applyFastMode,
+      applyModelEffort,
+      fastMode,
+      model,
+      openEffortPicker,
       openScheduleModal,
       beginUpdate,
       openSessionPicker,
@@ -2641,6 +2739,16 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         case "update":
           beginUpdate();
           break;
+        case "fast":
+          handleCommand("/fast");
+          break;
+        case "effort":
+          if (getSupportedReasoningEfforts(model).length === 0) {
+            setMessages((prev) => [...prev, buildAssistantEntry(formatEffortConfirmation(model, undefined))]);
+            break;
+          }
+          openEffortPicker();
+          break;
       }
     },
     [
@@ -2651,6 +2759,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       openRecapPicker,
       openSandboxPicker,
       openWalletPicker,
+      handleCommand,
+      model,
+      openEffortPicker,
       openScheduleModal,
       beginUpdate,
       closeKind,
@@ -3137,6 +3248,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           return;
         }
         if (key.name === "return") {
+          key.preventDefault();
+          key.stopPropagation();
           const item = filteredSlashItems[slashMenuIndex];
           if (item) handleSlashMenuSelect(item);
           setSlashSearchQuery("");
@@ -3216,6 +3329,31 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
+      if (currentFocus === "effort") {
+        const effortOptions = getEffortOptions(model);
+        if (isEscapeKey(key)) {
+          dismissFocus();
+          return;
+        }
+        if (key.name === "up" || key.name === "down") {
+          key.preventDefault();
+          key.stopPropagation();
+          setEffortPickerIndex((i) => {
+            if (key.name === "up") return Math.max(0, i - 1);
+            return Math.min(Math.max(effortOptions.length - 1, 0), i + 1);
+          });
+          return;
+        }
+        if (key.name === "return") {
+          key.preventDefault();
+          key.stopPropagation();
+          const selected = effortOptions[effortPickerIndex];
+          if (selected) applyModelEffort(model, effortOptionToValue(selected));
+          dismissFocus();
+          return;
+        }
+        return;
+      }
       if (currentFocus === "recap") {
         if (isEscapeKey(key)) {
           dismissFocus();
@@ -3234,7 +3372,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           return;
         }
         if (key.name === "return") {
-          applyRecapsEnabled(!recapsEnabled);
+          key.preventDefault();
+          key.stopPropagation();
+          dismissFocus();
           return;
         }
         return;
@@ -3509,6 +3649,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       editingSubagent,
       editSavedMcp,
       adjustModelReasoningEffort,
+      applyModelEffort,
+      effortPickerIndex,
       filteredModelIds,
       filteredSlashItems,
       handleExit,
@@ -3549,6 +3691,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       pqs,
       removeEditingSubagent,
       applyRecapsEnabled,
+      model,
       applySandboxMode,
       applySandboxSettings,
       recapsEnabled,
@@ -3707,6 +3850,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
                 showSandboxPicker={showSandboxPicker}
                 showWalletPicker={showWalletPicker}
                 showSlashMenu={showSlashMenu}
+                showEffortPicker={showEffortPicker}
                 showPlanQuestions={showPlanPanel}
                 showApiKeyModal={showApiKeyModal}
                 blockPrompt={blockPrompt}
@@ -3717,6 +3861,12 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
                 model={model}
                 modelInfo={modelInfo}
                 contextStats={contextStats}
+                fastMode={fastMode}
+                effortLabel={
+                  getSupportedReasoningEfforts(model).length > 0
+                    ? (getModelReasoningEffort(model) ?? "auto")
+                    : undefined
+                }
                 queuedCount={queuedMessages.length}
                 queuedMessages={queuedMessages}
                 typeahead={typeahead}
@@ -3730,6 +3880,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
             left={buildStatusBarLeft({ cwd: agent.getCwd(), homeDir: os.homedir(), sandboxMode })}
             right={buildStatusBarRight({
               modelName: modelInfo?.name || model,
+              fastMode,
+              effortLabel:
+                getSupportedReasoningEfforts(model).length > 0 ? (getModelReasoningEffort(model) ?? "auto") : undefined,
               contextLabel: contextStats ? formatContextLabel(contextStats) : undefined,
             })}
           />
@@ -3752,6 +3905,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
                 showSandboxPicker={showSandboxPicker}
                 showWalletPicker={showWalletPicker}
                 showSlashMenu={showSlashMenu}
+                showEffortPicker={showEffortPicker}
                 showPlanQuestions={showPlanPanel}
                 showApiKeyModal={showApiKeyModal}
                 blockPrompt={blockPrompt}
@@ -3762,6 +3916,12 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
                 model={model}
                 modelInfo={modelInfo}
                 contextStats={contextStats}
+                fastMode={fastMode}
+                effortLabel={
+                  getSupportedReasoningEfforts(model).length > 0
+                    ? (getModelReasoningEffort(model) ?? "auto")
+                    : undefined
+                }
                 placeholder={"What are we building?"}
                 typeahead={typeahead}
                 ghostSuggestion={pluginHost.ghostSuggestion}
@@ -3800,6 +3960,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
             left={buildStatusBarLeft({ cwd: agent.getCwd(), homeDir: os.homedir(), sandboxMode })}
             right={buildStatusBarRight({
               modelName: modelInfo?.name || model,
+              fastMode,
+              effortLabel:
+                getSupportedReasoningEfforts(model).length > 0 ? (getModelReasoningEffort(model) ?? "auto") : undefined,
               contextLabel: contextStats ? formatContextLabel(contextStats) : undefined,
               version: `v${startupConfig.version}`,
             })}
@@ -3936,6 +4099,16 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         />
       )}
       {showRecapPicker && <RecapPickerModal t={t} enabled={recapsEnabled} width={width} height={height} />}
+      {showEffortPicker && (
+        <EffortPickerModal
+          t={t}
+          modelId={model}
+          effort={getModelReasoningEffort(model)}
+          selectedIndex={effortPickerIndex}
+          width={width}
+          height={height}
+        />
+      )}
       {showSandboxPicker && (
         <SandboxPickerModal
           t={t}
@@ -4054,24 +4227,25 @@ function formatContextLabel(stats: ContextStats): string {
   return `${Math.round(stats.ratioRemaining * 100)}% ${formatTokenCount(stats.remainingTokens)}`;
 }
 
+function statusSegmentColor(t: Theme, tone: StatusSegment["tone"]): string {
+  if (tone === "warn") return "#f97316";
+  if (tone === "accent") return t.accent;
+  if (tone === "normal") return t.text;
+  return t.textDim;
+}
+
 function StatusBar({ t, left, right }: { t: Theme; left: StatusSegment[]; right?: StatusSegment[] }) {
   return (
     <box paddingLeft={2} paddingRight={2} paddingBottom={1} flexDirection="row" flexShrink={0}>
       {left.map((segment, index) => (
-        <text
-          key={`left-${segment.tone ?? "muted"}-${segment.text}`}
-          fg={segment.tone === "warn" ? "#f97316" : segment.tone === "normal" ? t.text : t.textDim}
-        >
+        <text key={`left-${segment.tone ?? "muted"}-${segment.text}`} fg={statusSegmentColor(t, segment.tone)}>
           {index > 0 ? " · " : ""}
           {segment.text}
         </text>
       ))}
       <box flexGrow={1} />
       {(right ?? []).map((segment, index) => (
-        <text
-          key={`right-${segment.tone ?? "muted"}-${segment.text}`}
-          fg={segment.tone === "warn" ? "#f97316" : segment.tone === "normal" ? t.text : t.textDim}
-        >
+        <text key={`right-${segment.tone ?? "muted"}-${segment.text}`} fg={statusSegmentColor(t, segment.tone)}>
           {index > 0 ? " · " : ""}
           {segment.text}
         </text>
@@ -4088,6 +4262,7 @@ function PromptBox({
   showSandboxPicker,
   showWalletPicker,
   showSlashMenu,
+  showEffortPicker,
   showPlanQuestions,
   showApiKeyModal,
   blockPrompt,
@@ -4098,6 +4273,8 @@ function PromptBox({
   model,
   modelInfo,
   contextStats,
+  fastMode,
+  effortLabel,
   placeholder,
   queuedCount,
   queuedMessages,
@@ -4112,6 +4289,7 @@ function PromptBox({
   showSandboxPicker: boolean;
   showWalletPicker: boolean;
   showSlashMenu: boolean;
+  showEffortPicker?: boolean;
   showPlanQuestions: boolean;
   showApiKeyModal: boolean;
   blockPrompt?: boolean;
@@ -4122,6 +4300,8 @@ function PromptBox({
   model: string;
   modelInfo: ReturnType<typeof getModelInfo>;
   contextStats?: ContextStats | null;
+  fastMode?: boolean;
+  effortLabel?: string;
   placeholder?: string;
   queuedCount?: number;
   queuedMessages?: string[];
@@ -4190,6 +4370,7 @@ function PromptBox({
                 !showSandboxPicker &&
                 !showWalletPicker &&
                 !showSlashMenu &&
+                !showEffortPicker &&
                 !showPlanQuestions &&
                 !showApiKeyModal &&
                 !blockPrompt
@@ -4224,7 +4405,11 @@ function PromptBox({
         flexShrink={0}
       >
         <box flexDirection="row" gap={1} alignItems="center" height={1}>
-          <text fg={t.text}>{modelInfo?.name || model}</text>
+          <text fg={t.text}>
+            {modelInfo?.name || model}
+            {effortLabel ? ` [${effortLabel}]` : ""}
+          </text>
+          {fastMode ? <text fg={t.accent}>{"fast"}</text> : null}
           {contextStats ? <ContextMeter t={t} stats={contextStats} /> : null}
         </box>
         <box flexDirection="row" gap={1} alignItems="center" height={1}>
@@ -5901,7 +6086,88 @@ function RecapPickerModal({
           </box>
         </box>
         <box flexShrink={0} paddingLeft={2} paddingRight={2} paddingTop={1}>
-          <text fg={t.textMuted}>{"left/right toggle  enter cycle  esc close"}</text>
+          <text fg={t.textMuted}>{"left/right toggle  enter confirm  esc close"}</text>
+        </box>
+      </box>
+    </box>
+  );
+}
+
+function EffortPickerModal({
+  t,
+  modelId,
+  effort,
+  selectedIndex,
+  width,
+  height,
+}: {
+  t: Theme;
+  modelId: string;
+  effort: ReasoningEffort | undefined;
+  selectedIndex: number;
+  width: number;
+  height: number;
+}) {
+  const options = getEffortOptions(modelId);
+  const current = formatEffortOption(effort);
+  const itemCount = Math.max(options.length, 1);
+  const panelHeight = Math.min(itemCount + 7, Math.floor(height * 0.6));
+  const top = bottomAlignedModalTop(height, panelHeight);
+  const overlayBg = "#000000cc" as string;
+  const modelName = getModelInfo(modelId)?.name || modelId;
+
+  return (
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width={width}
+      height={height}
+      alignItems="center"
+      paddingTop={top}
+      backgroundColor={overlayBg}
+    >
+      <box
+        width={Math.min(56, width - 6)}
+        height={panelHeight}
+        backgroundColor={t.backgroundPanel}
+        paddingTop={1}
+        paddingBottom={1}
+        flexDirection="column"
+      >
+        <box flexShrink={0} flexDirection="row" justifyContent="space-between" paddingLeft={2} paddingRight={2}>
+          <text fg={t.primary}>
+            <b>{"Reasoning effort"}</b>
+          </text>
+          <text fg={t.textMuted}>{"esc"}</text>
+        </box>
+        <box flexShrink={0} paddingLeft={2} paddingRight={2} height={1}>
+          <text fg={t.textMuted}>{modelName}</text>
+        </box>
+        <box flexGrow={1} minHeight={0} flexDirection="column">
+          {options.map((option, idx) => {
+            const selected = idx === selectedIndex;
+            const active = option === current;
+            return (
+              <box
+                key={option}
+                height={1}
+                flexShrink={0}
+                backgroundColor={selected ? t.selectedBg : undefined}
+                paddingLeft={2}
+                paddingRight={2}
+                width="100%"
+                flexDirection="row"
+                justifyContent="space-between"
+              >
+                <text fg={active ? t.accent : selected ? t.selected : t.text}>{option}</text>
+                <text fg={selected ? t.primary : t.textMuted}>{describeEffortOption(option)}</text>
+              </box>
+            );
+          })}
+        </box>
+        <box flexShrink={0} paddingLeft={2} paddingRight={2} height={1}>
+          <text fg={t.textMuted}>{"↑↓ select  enter confirm  esc close"}</text>
         </box>
       </box>
     </box>

@@ -1,4 +1,4 @@
-export { BUNDLED_PLUGINS, getBundledPlugin, reservedPluginCommands } from "./catalog.js";
+export { BUNDLED_PLUGINS, DEFAULT_INSTALLED_PLUGINS, getBundledPlugin, reservedPluginCommands } from "./catalog.js";
 export { formatPluginList, parsePluginCommand, pluginUsageText, runPluginCommand } from "./command.js";
 export { installGitHubPlugin, uninstallGitHubPlugin } from "./install.js";
 export { isPluginInstalled, normalizeInstalledPlugins } from "./installed.js";

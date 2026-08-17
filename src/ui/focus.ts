@@ -4,6 +4,7 @@ export const FOCUS_KINDS = [
   "model",
   "sandbox",
   "recap",
+  "effort",
   "wallet",
   "apiKey",
   "connect",

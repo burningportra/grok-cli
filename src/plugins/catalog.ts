@@ -16,6 +16,8 @@ export const BUNDLED_PLUGINS: PluginManifest[] = [
   },
 ];
 
+export const DEFAULT_INSTALLED_PLUGINS = ["suggester"] as const;
+
 export function getBundledPlugin(id: string): PluginManifest | undefined {
   const normalized = id.trim().toLowerCase();
   return BUNDLED_PLUGINS.find((plugin) => plugin.id === normalized);

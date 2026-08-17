@@ -3,6 +3,7 @@ import { generateText } from "ai";
 import type { ModelInfo, ReasoningEffort } from "../types/index";
 import { getReasoningEffortForModel } from "../utils/settings";
 import { getEffectiveReasoningEffort, getModelInfo, normalizeModelId } from "./models";
+import { withoutLiveRequestOverrides, wrapFetchWithLiveRequestOverrides } from "./request-overrides";
 
 export type XaiProvider = ReturnType<typeof createXai>;
 export type XaiChatModel = ReturnType<XaiProvider>;
@@ -44,6 +45,7 @@ export function createProvider(apiKey: string, baseURL?: string): XaiProvider {
   return createXai({
     apiKey,
     baseURL: baseURL || process.env.GROK_BASE_URL || "https://api.x.ai/v1",
+    fetch: wrapFetchWithLiveRequestOverrides(),
   });
 }
 
@@ -51,15 +53,16 @@ export function resolveModelRuntime(provider: XaiProvider, requestedModelId: str
   const modelId = normalizeModelId(requestedModelId);
   const modelInfo = getModelInfo(modelId);
   const reasoningEffort = getEffectiveReasoningEffort(modelId, getReasoningEffortForModel(modelId));
+  const sdkSafeEffort = reasoningEffort === "low" || reasoningEffort === "high" ? reasoningEffort : undefined;
 
   return {
     model: modelInfo?.responsesOnly ? provider.responses(modelId) : provider(modelId),
     modelId,
     modelInfo,
-    providerOptions: reasoningEffort
+    providerOptions: sdkSafeEffort
       ? {
           xai: {
-            reasoningEffort,
+            reasoningEffort: sdkSafeEffort,
           },
         }
       : undefined,
@@ -69,24 +72,26 @@ export function resolveModelRuntime(provider: XaiProvider, requestedModelId: str
 export async function generateTitle(provider: XaiProvider, userMessage: string): Promise<GeneratedTitle> {
   const runtime = resolveModelRuntime(provider, DEFAULT_TITLE_MODEL);
   try {
-    const { text, usage } = await generateText({
-      model: runtime.model,
-      temperature: 0.5,
-      ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens: 60 }),
-      ...(runtime.providerOptions ? { providerOptions: runtime.providerOptions } : {}),
-      system: [
-        "You are a title generator. Output ONLY a short title. Nothing else.",
-        "Rules:",
-        "- Single line, ≤50 characters",
-        "- Use the same language as the user message",
-        "- Focus on the main topic or intent",
-        "- Keep technical terms, filenames, numbers exact",
-        "- Remove filler words (the, this, my, a, an)",
-        "- Never use tools or explain anything",
-        "- If the message is a greeting, output something like 'Quick chat'",
-      ].join("\n"),
-      prompt: userMessage,
-    });
+    const { text, usage } = await withoutLiveRequestOverrides(() =>
+      generateText({
+        model: runtime.model,
+        temperature: 0.5,
+        ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens: 60 }),
+        ...(runtime.providerOptions ? { providerOptions: runtime.providerOptions } : {}),
+        system: [
+          "You are a title generator. Output ONLY a short title. Nothing else.",
+          "Rules:",
+          "- Single line, ≤50 characters",
+          "- Use the same language as the user message",
+          "- Focus on the main topic or intent",
+          "- Keep technical terms, filenames, numbers exact",
+          "- Remove filler words (the, this, my, a, an)",
+          "- Never use tools or explain anything",
+          "- If the message is a greeting, output something like 'Quick chat'",
+        ].join("\n"),
+        prompt: userMessage,
+      }),
+    );
     return {
       title: text?.trim().replace(/^["']|["']$/g, "") || "New session",
       modelId: runtime.modelId,
@@ -104,24 +109,26 @@ export async function generateRecap(
 ): Promise<GeneratedRecap> {
   const runtime = resolveModelRuntime(provider, DEFAULT_RECAP_MODEL);
   try {
-    const { text, usage } = await generateText({
-      model: runtime.model,
-      abortSignal: signal,
-      temperature: 0.3,
-      ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens: 120 }),
-      ...(runtime.providerOptions ? { providerOptions: runtime.providerOptions } : {}),
-      system: [
-        "You write terse coding-session recaps.",
-        "Output ONLY the recap text. No bullets, headings, labels, or preamble.",
-        "Rules:",
-        "- Maximum 3 sentences total",
-        "- Focus on what changed, what remains, and the most useful next step",
-        "- Preserve exact file paths, function names, errors, and technical terms when present",
-        "- Avoid filler, hedging, and repetition",
-        "- Never mention being an AI, assistant, or summarizer",
-      ].join("\n"),
-      prompt: transcript,
-    });
+    const { text, usage } = await withoutLiveRequestOverrides(() =>
+      generateText({
+        model: runtime.model,
+        abortSignal: signal,
+        temperature: 0.3,
+        ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens: 120 }),
+        ...(runtime.providerOptions ? { providerOptions: runtime.providerOptions } : {}),
+        system: [
+          "You write terse coding-session recaps.",
+          "Output ONLY the recap text. No bullets, headings, labels, or preamble.",
+          "Rules:",
+          "- Maximum 3 sentences total",
+          "- Focus on what changed, what remains, and the most useful next step",
+          "- Preserve exact file paths, function names, errors, and technical terms when present",
+          "- Avoid filler, hedging, and repetition",
+          "- Never mention being an AI, assistant, or summarizer",
+        ].join("\n"),
+        prompt: transcript,
+      }),
+    );
     return {
       recap: normalizeRecap(text),
       modelId: runtime.modelId,

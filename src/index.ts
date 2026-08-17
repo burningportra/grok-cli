@@ -5,7 +5,7 @@ import readline from "readline";
 import packageJson from "../package.json";
 import { Agent } from "./agent/agent";
 import { completeDelegation, failDelegation, loadDelegation } from "./agent/delegations";
-import { MODELS, normalizeModelId } from "./grok/models";
+import { MODELS, normalizeModelId, parseReasoningEffort } from "./grok/models";
 import {
   createHeadlessJsonlEmitter,
   type HeadlessOutputFormat,
@@ -28,6 +28,8 @@ import {
   type SandboxSettings,
   savePaymentSettings,
   saveUserSettings,
+  setProcessFastModeOverride,
+  setProcessReasoningEffortOverride,
 } from "./utils/settings";
 import { runUpdate } from "./utils/update-checker";
 import {
@@ -175,6 +177,19 @@ function stringOption(value: string | boolean | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function applyProcessRuntimeOverrides(options: CliOptions): void {
+  if (options.fast === true) setProcessFastModeOverride(true);
+  if (options.fast === false) setProcessFastModeOverride(false);
+
+  const effortValue = stringOption(options.effort);
+  if (!effortValue) return;
+  const effort = parseReasoningEffort(effortValue);
+  if (!effort) {
+    throw new InvalidArgumentError(`Invalid effort "${effortValue}". Expected low, medium, high, or xhigh.`);
+  }
+  setProcessReasoningEffortOverride(effort);
+}
+
 function collect(value: string, prev: string[]): string[] {
   return [...prev, value];
 }
@@ -266,6 +281,7 @@ async function runBackgroundDelegation(jobPath: string, options: CliOptions) {
     const model = explicitModel ? normalizeModelId(explicitModel) : undefined;
     const maxToolRounds =
       parseInt(stringOption(options.maxToolRounds) || String(delegation.maxToolRounds), 10) || delegation.maxToolRounds;
+    applyProcessRuntimeOverrides(options);
     const sandboxMode = resolveCliSandboxMode(options.sandbox) || delegation.sandboxMode || getCurrentSandboxMode();
     const sandboxSettings = mergeSandboxSettings(getCurrentSandboxSettings(), delegation.sandboxSettings);
     agent = new Agent(apiKey, baseURL, model, maxToolRounds, {
@@ -368,6 +384,9 @@ program
   .option("--background-task-file <path>", "Run a persisted background delegation")
   .option("--max-tool-rounds <n>", "Max tool execution rounds", "400")
   .option("--batch-api", "Use xAI Batch API for model calls (async, lower cost)")
+  .option("--fast", "Use xAI Fast Mode (priority processing, 2x rates)")
+  .option("--no-fast", "Disable Fast Mode for this process")
+  .option("--effort <level>", "Reasoning effort for this process: low, medium, high, or xhigh")
   .option("--update", "Update grok to the latest version and exit")
   .action(async (message: string[], options) => {
     if (options.update) {
@@ -385,6 +404,7 @@ program
     }
 
     const config = resolveConfig(options);
+    applyProcessRuntimeOverrides(options);
 
     if (options.verify) {
       const verifyError = getVerifyCliError({ hasPrompt: Boolean(options.prompt), hasMessageArgs: message.length > 0 });
@@ -454,6 +474,7 @@ program
   .action(async (options) => {
     changeDirectoryOrExit(options.directory);
     const config = resolveConfig(options);
+    applyProcessRuntimeOverrides(options);
 
     process.off("SIGTERM", exitCleanlyOnSigterm);
     try {

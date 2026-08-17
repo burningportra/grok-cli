@@ -2,6 +2,7 @@ import { generateText } from "ai";
 import { execFileSync } from "child_process";
 import { resolve } from "path";
 import { resolveModelRuntime, type XaiProvider } from "../grok/client.js";
+import { withoutLiveRequestOverrides } from "../grok/request-overrides.js";
 import {
   CURRENT_GENERATOR_VERSION,
   CURRENT_SEED_VERSION,
@@ -110,15 +111,17 @@ async function callSeederModel(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<{ text: string; stepUsage: SuggestionTokenUsage }> {
-  const { text, usage } = await generateText({
-    model: runtime.model,
-    abortSignal: signal,
-    temperature: 0.2,
-    ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens: 1800 }),
-    ...(runtime.providerOptions ? { providerOptions: runtime.providerOptions } : {}),
-    system: renderSeederSystemPrompt(),
-    prompt,
-  });
+  const { text, usage } = await withoutLiveRequestOverrides(() =>
+    generateText({
+      model: runtime.model,
+      abortSignal: signal,
+      temperature: 0.2,
+      ...(runtime.modelInfo?.supportsMaxOutputTokens === false ? {} : { maxOutputTokens: 1800 }),
+      ...(runtime.providerOptions ? { providerOptions: runtime.providerOptions } : {}),
+      system: renderSeederSystemPrompt(),
+      prompt,
+    }),
+  );
   return {
     text: text ?? "",
     stepUsage: {
