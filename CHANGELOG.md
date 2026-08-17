@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/btw` command for side questions (#264)
 - `/resume` command to switch to a saved workspace session from the TUI
 - Splash screen shows upstream updates; `ctrl+u` / `/update` installs them
+- Up/down arrows cycle previous typed prompts
 
 ### Changed
 - Renamed the `grok-dev` CLI command to `grok-kev`

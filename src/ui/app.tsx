@@ -86,6 +86,17 @@ import {
   type PlanQuestionsState,
   PlanView,
 } from "./plan";
+import {
+  canRecallNewer,
+  canRecallOlder,
+  createPromptHistoryState,
+  loadPromptHistory,
+  recalledPrompt,
+  recallNewer,
+  recallOlder,
+  recordPrompt,
+  savePromptHistory,
+} from "./prompt-history";
 import { buildScheduleBrowseRows, ScheduleBrowserModal } from "./schedule-modal";
 import { buildSessionBrowseRows, SessionBrowserModal } from "./session-modal";
 import { filterSlashMenuItems, SLASH_MENU_ITEMS, type SlashMenuItem } from "./slash-menu";
@@ -689,6 +700,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const hasApiKeyRef = useRef(initialHasApiKey);
   const showApiKeyModalRef = useRef(!initialHasApiKey);
   const queuedMessagesRef = useRef<QueuedMessage[]>([]);
+  const promptHistoryRef = useRef(createPromptHistoryState(loadPromptHistory()));
   const processMessageRef = useRef<(text: string, displayText?: string) => Promise<void> | void>(() => {});
   const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
   const modeInfoRef = useRef<(typeof MODES)[number]>(MODES[0]);
@@ -2106,6 +2118,13 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     applySessionSnapshot(agent.startNewSession());
   }, [agent, applySessionSnapshot]);
 
+  const applyPromptText = useCallback((text: string) => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    ta.setText(text);
+    ta.cursorOffset = text.length;
+  }, []);
+
   const beginUpdate = useCallback(() => {
     if (isUpdating) return;
     setShowUpdateModal(false);
@@ -3462,6 +3481,31 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           return;
         }
       }
+      if ((key.name === "up" || key.name === "down") && !showSlashMenu && !blockPrompt && !showPlanPanel) {
+        const ta = inputRef.current;
+        const current = ta?.plainText ?? "";
+        const cursor = ta?.cursorOffset ?? current.length;
+        if (key.name === "up" && canRecallOlder(current, cursor)) {
+          const next = recallOlder(promptHistoryRef.current, current);
+          if (next) {
+            key.preventDefault();
+            key.stopPropagation();
+            promptHistoryRef.current = next;
+            applyPromptText(recalledPrompt(next));
+            return;
+          }
+        }
+        if (key.name === "down" && canRecallNewer(current, cursor)) {
+          const next = recallNewer(promptHistoryRef.current);
+          if (next) {
+            key.preventDefault();
+            key.stopPropagation();
+            promptHistoryRef.current = next;
+            applyPromptText(recalledPrompt(next));
+            return;
+          }
+        }
+      }
       const ghostBlocked =
         isProcessing ||
         showSlashMenu ||
@@ -3481,6 +3525,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     },
     [
       agent,
+      applyPromptText,
       beginUpdate,
       agentRows,
       agentsEditorField,
@@ -3620,6 +3665,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       message = message.replace(getFileMentionToken(block), `@${block.path}`);
     }
     if (!message.trim()) return;
+    const nextHistory = recordPrompt(promptHistoryRef.current, displayText);
+    promptHistoryRef.current = nextHistory;
+    savePromptHistory(nextHistory.entries);
     if (!hasApiKeyRef.current) {
       openApiKeyModal();
       return;
