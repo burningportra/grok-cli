@@ -1,9 +1,10 @@
-import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
-import { type RefObject, useEffect, useRef } from "react";
+import type { TextareaRenderable } from "@opentui/core";
+import { type RefObject, useEffect } from "react";
 import type { McpCatalogEntry } from "../mcp/catalog";
 import { toMcpServerId } from "../mcp/validate";
 import type { McpServerConfig } from "../utils/settings";
 import type { McpBrowserRow, McpEditorDraft, McpEditorField } from "./mcp-modal-types";
+import { SearchableListOverlay } from "./searchable-list-overlay";
 import type { Theme } from "./theme";
 
 const EDITOR_KEYBINDINGS = [{ name: "return", action: "submit" as const }];
@@ -68,131 +69,93 @@ export function McpBrowserModal({
   searchQuery: string;
   rows: McpBrowserRow[];
 }) {
-  const listRef = useRef<ScrollBoxRenderable>(null);
-
-  useEffect(() => {
-    const selected = rows[selectedIndex];
-    if (!selected) return;
-
-    if (selected.kind === "server") {
-      listRef.current?.scrollChildIntoView(`mcp-server-${selected.server.id}`);
-    } else if (selected.kind === "catalog") {
-      listRef.current?.scrollChildIntoView(`mcp-catalog-${selected.entry.id}`);
-    } else {
-      listRef.current?.scrollChildIntoView("mcp-add");
-    }
-  }, [rows, selectedIndex]);
-
-  const itemCount = Math.max(rows.length, 1);
-  const contentHeight = itemCount + 7;
-  const maxHeight = Math.floor(height * 0.68);
-  const panelHeight = Math.min(contentHeight, maxHeight);
-  const overlayBg = "#000000cc" as string;
+  const selected = rows[selectedIndex];
+  const selectedId =
+    selected?.kind === "server"
+      ? `mcp-server-${selected.server.id}`
+      : selected?.kind === "catalog"
+        ? `mcp-catalog-${selected.entry.id}`
+        : selected
+          ? "mcp-add"
+          : undefined;
 
   return (
-    <box
-      position="absolute"
-      left={0}
-      top={0}
+    <SearchableListOverlay
+      t={t}
       width={width}
       height={height}
-      alignItems="center"
-      paddingTop={bottomAlignedModalTop(height, panelHeight)}
-      backgroundColor={overlayBg}
+      title="MCP Servers"
+      searchQuery={searchQuery}
+      searchPlaceholder="Search servers..."
+      selectedIndex={selectedIndex}
+      selectedId={selectedId}
+      itemCount={rows.length}
+      emptyLabel="No MCP servers"
+      hints={{ enter: "toggle", extra: "ctrl+e edit · ctrl+a add · ctrl+x delete" }}
+      panelWidth={Math.min(96, width - 4)}
+      contentHeight={Math.max(rows.length, 1) + 7}
     >
-      <box
-        width={Math.min(96, width - 4)}
-        height={panelHeight}
-        backgroundColor={t.backgroundPanel}
-        paddingTop={1}
-        paddingBottom={1}
-        flexDirection="column"
-      >
-        <box flexShrink={0} flexDirection="row" justifyContent="space-between" paddingLeft={2} paddingRight={2}>
-          <text fg={t.primary}>
-            <b>{"MCP Servers"}</b>
-          </text>
-          <text fg={t.textMuted}>{"esc"}</text>
-        </box>
-        <box flexShrink={0} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
-          <text fg={t.text}>{searchQuery || <span style={{ fg: t.textMuted }}>{"Search servers..."}</span>}</text>
-        </box>
-        <scrollbox ref={listRef} flexGrow={1} minHeight={0}>
-          {rows.map((row, idx) => {
-            const selected = idx === selectedIndex;
+      {rows.map((row, idx) => {
+        const selectedRow = idx === selectedIndex;
 
-            if (row.kind === "server") {
-              const enabledColor = row.server.enabled ? t.diffAddedFg : selected ? t.selected : t.text;
-              return (
-                <box
-                  key={`server-${row.server.id}`}
-                  id={`mcp-server-${row.server.id}`}
-                  backgroundColor={selected ? t.selectedBg : undefined}
-                  paddingLeft={2}
-                  paddingRight={2}
-                >
-                  <box flexDirection="row" justifyContent="space-between">
-                    <text fg={enabledColor}>
-                      {row.server.enabled ? "■ " : "□ "}
-                      {row.server.label}
-                    </text>
-                    <text fg={row.server.enabled ? t.diffAddedFg : t.textMuted}>{row.server.transport}</text>
-                  </box>
-                  <text fg={t.textMuted}>{row.description}</text>
-                </box>
-              );
-            }
-
-            if (row.kind === "catalog") {
-              return (
-                <box
-                  key={`catalog-${row.entry.id}`}
-                  id={`mcp-catalog-${row.entry.id}`}
-                  backgroundColor={selected ? t.selectedBg : undefined}
-                  paddingLeft={2}
-                  paddingRight={2}
-                >
-                  <box flexDirection="row" justifyContent="space-between">
-                    <text fg={selected ? t.selected : t.text}>
-                      {"□ "}
-                      {row.entry.name}
-                    </text>
-                    <text fg={t.textMuted}>{"Popular"}</text>
-                  </box>
-                  <text fg={t.textMuted}>{row.entry.description}</text>
-                </box>
-              );
-            }
-
-            return (
-              <box
-                key="mcp-add"
-                id="mcp-add"
-                backgroundColor={selected ? t.selectedBg : undefined}
-                paddingLeft={2}
-                paddingRight={2}
-              >
-                <text fg={selected ? t.selected : t.primary}>
-                  <b>{"□ Add Custom MCP"}</b>
+        if (row.kind === "server") {
+          const enabledColor = row.server.enabled ? t.diffAddedFg : selectedRow ? t.selected : t.text;
+          return (
+            <box
+              key={`server-${row.server.id}`}
+              id={`mcp-server-${row.server.id}`}
+              backgroundColor={selectedRow ? t.selectedBg : undefined}
+              paddingLeft={2}
+              paddingRight={2}
+            >
+              <box flexDirection="row" justifyContent="space-between">
+                <text fg={enabledColor}>
+                  {row.server.enabled ? "■ " : "□ "}
+                  {row.server.label}
                 </text>
+                <text fg={row.server.enabled ? t.diffAddedFg : t.textMuted}>{row.server.transport}</text>
               </box>
-            );
-          })}
-        </scrollbox>
-        <box flexShrink={0} paddingLeft={2} paddingRight={2} paddingTop={2} paddingBottom={1}>
-          <text>
-            <span style={{ fg: t.primary }}>{"enter "}</span>
-            <span style={{ fg: t.textMuted }}>{"toggle  ·  "}</span>
-            <span style={{ fg: t.primary }}>{"ctrl+e "}</span>
-            <span style={{ fg: t.textMuted }}>{"edit  ·  "}</span>
-            <span style={{ fg: t.primary }}>{"ctrl+a "}</span>
-            <span style={{ fg: t.textMuted }}>{"add  ·  "}</span>
-            <span style={{ fg: t.primary }}>{"ctrl+x "}</span>
-            <span style={{ fg: t.textMuted }}>{"delete"}</span>
-          </text>
-        </box>
-      </box>
-    </box>
+              <text fg={t.textMuted}>{row.description}</text>
+            </box>
+          );
+        }
+
+        if (row.kind === "catalog") {
+          return (
+            <box
+              key={`catalog-${row.entry.id}`}
+              id={`mcp-catalog-${row.entry.id}`}
+              backgroundColor={selectedRow ? t.selectedBg : undefined}
+              paddingLeft={2}
+              paddingRight={2}
+            >
+              <box flexDirection="row" justifyContent="space-between">
+                <text fg={selectedRow ? t.selected : t.text}>
+                  {"□ "}
+                  {row.entry.name}
+                </text>
+                <text fg={t.textMuted}>{"Popular"}</text>
+              </box>
+              <text fg={t.textMuted}>{row.entry.description}</text>
+            </box>
+          );
+        }
+
+        return (
+          <box
+            key="mcp-add"
+            id="mcp-add"
+            backgroundColor={selectedRow ? t.selectedBg : undefined}
+            paddingLeft={2}
+            paddingRight={2}
+          >
+            <text fg={selectedRow ? t.selected : t.primary}>
+              <b>{"□ Add Custom MCP"}</b>
+            </text>
+          </box>
+        );
+      })}
+    </SearchableListOverlay>
   );
 }
 

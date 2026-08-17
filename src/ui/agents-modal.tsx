@@ -1,8 +1,9 @@
-import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
-import { type RefObject, useEffect, useRef } from "react";
+import type { TextareaRenderable } from "@opentui/core";
+import { type RefObject, useEffect } from "react";
 import { MODELS } from "../grok/models";
 import type { CustomSubagentConfig } from "../utils/settings";
 import { formatSubagentName } from "../utils/subagent-display";
+import { SearchableListOverlay } from "./searchable-list-overlay";
 import type { Theme } from "./theme";
 
 const EDITOR_KEYBINDINGS = [{ name: "return", action: "submit" as const }];
@@ -51,89 +52,44 @@ export function SubagentsBrowserModal({
   searchQuery: string;
   rows: SubagentBrowseRow[];
 }) {
-  const listRef = useRef<ScrollBoxRenderable>(null);
-
-  useEffect(() => {
-    const selected = rows[selectedIndex];
-    if (!selected) return;
-
-    listRef.current?.scrollChildIntoView(`subagent-${selected.agent.name}`);
-  }, [rows, selectedIndex]);
-
-  const itemCount = Math.max(rows.length, 1);
-  const contentHeight = itemCount + 8;
-  const panelHeight = Math.min(contentHeight, Math.floor(height * 0.6));
-  const panelWidth = Math.min(60, width - 6);
-  const overlayBg = "#000000cc" as string;
-
+  const selected = rows[selectedIndex];
   return (
-    <box
-      position="absolute"
-      left={0}
-      top={0}
+    <SearchableListOverlay
+      t={t}
       width={width}
       height={height}
-      alignItems="center"
-      paddingTop={bottomAlignedModalTop(height, panelHeight)}
-      backgroundColor={overlayBg}
+      title="Custom sub-agents"
+      searchQuery={searchQuery}
+      searchPlaceholder="Search by name, model..."
+      selectedIndex={selectedIndex}
+      selectedId={selected ? `subagent-${selected.agent.name}` : undefined}
+      itemCount={rows.length}
+      emptyLabel="No custom sub-agents yet"
+      hints={{ enter: "open selected", extra: "ctrl+a add" }}
+      panelWidth={Math.min(60, width - 6)}
+      contentHeight={Math.max(rows.length, 1) + 8}
     >
-      <box
-        width={panelWidth}
-        height={panelHeight}
-        backgroundColor={t.backgroundPanel}
-        paddingTop={1}
-        paddingBottom={1}
-        flexDirection="column"
-      >
-        <box flexShrink={0} flexDirection="row" justifyContent="space-between" paddingLeft={2} paddingRight={2}>
-          <text fg={t.primary}>
-            <b>{"Custom sub-agents"}</b>
-          </text>
-          <text fg={t.textMuted}>{"esc"}</text>
-        </box>
-        <box flexShrink={0} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
-          <text fg={t.text}>
-            {searchQuery || <span style={{ fg: t.textMuted }}>{"Search by name, model..."}</span>}
-          </text>
-        </box>
-        <scrollbox ref={listRef} flexGrow={1} minHeight={0}>
-          {rows.map((row, idx) => {
-            const selected = idx === selectedIndex;
-
-            return (
-              <box
-                key={`agent-${row.agent.name}`}
-                id={`subagent-${row.agent.name}`}
-                width="100%"
-                backgroundColor={selected ? t.selectedBg : undefined}
-                paddingLeft={2}
-                paddingRight={2}
-              >
-                <box width="100%" flexDirection="row" justifyContent="space-between">
-                  <text fg={selected ? t.primary : t.text}>
-                    <b>{formatSubagentName(row.agent.name)}</b>
-                  </text>
-                  <text fg={t.textMuted}>{row.agent.model}</text>
-                </box>
-              </box>
-            );
-          })}
-          {rows.length === 0 ? (
-            <box paddingLeft={2} paddingRight={2}>
-              <text fg={t.textMuted}>{"No custom sub-agents yet"}</text>
+      {rows.map((row, idx) => {
+        const selectedRow = idx === selectedIndex;
+        return (
+          <box
+            key={`agent-${row.agent.name}`}
+            id={`subagent-${row.agent.name}`}
+            width="100%"
+            backgroundColor={selectedRow ? t.selectedBg : undefined}
+            paddingLeft={2}
+            paddingRight={2}
+          >
+            <box width="100%" flexDirection="row" justifyContent="space-between">
+              <text fg={selectedRow ? t.primary : t.text}>
+                <b>{formatSubagentName(row.agent.name)}</b>
+              </text>
+              <text fg={t.textMuted}>{row.agent.model}</text>
             </box>
-          ) : null}
-        </scrollbox>
-        <box flexShrink={0} paddingLeft={2} paddingRight={2} paddingTop={2} paddingBottom={1}>
-          <text>
-            <span style={{ fg: t.primary }}>{"enter "}</span>
-            <span style={{ fg: t.textMuted }}>{"open selected · "}</span>
-            <span style={{ fg: t.primary }}>{"ctrl+a "}</span>
-            <span style={{ fg: t.textMuted }}>{"add"}</span>
-          </text>
-        </box>
-      </box>
-    </box>
+          </box>
+        );
+      })}
+    </SearchableListOverlay>
   );
 }
 

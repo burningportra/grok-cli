@@ -2,7 +2,7 @@ import type { KeyBinding, KeyEvent, ScrollBoxRenderable, TextareaRenderable } fr
 import { decodePasteBytes, type PasteEvent, parseKeypress } from "@opentui/core";
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import os from "os";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Agent } from "../agent/agent";
 import {
   DEFAULT_MODEL,
@@ -71,12 +71,26 @@ import {
   SubagentEditorModal,
   SubagentsBrowserModal,
 } from "./agents-modal";
+import { chatEntryKey, messageViewUnchanged } from "./chat-entry-render";
 import { BtwOverlay, type BtwState } from "./components/btw-overlay.js";
 import { GhostPromptHint } from "./components/GhostPromptHint.js";
 import { SuggestionOverlay } from "./components/SuggestionOverlay.js";
+import {
+  closeFocus,
+  createFocusStack,
+  type FocusKind,
+  hasFocus,
+  isPromptFocused,
+  peekFocus,
+  popFocus,
+  pushFocus,
+  replaceTopFocus,
+  resetFocus,
+} from "./focus";
 import { pluginReservedCommands, usePluginHost } from "./hooks/usePluginHost.js";
 import { type TypeaheadState, useTypeahead } from "./hooks/useTypeahead.js";
 import { Markdown } from "./markdown";
+import { shouldFlushStreamMarkdown } from "./markdown-cache";
 import { buildMcpBrowseRows, McpBrowserModal, McpEditorModal } from "./mcp-modal";
 import { createEmptyMcpEditorDraft, type McpEditorDraft, type McpEditorField } from "./mcp-modal-types";
 import {
@@ -98,8 +112,11 @@ import {
   savePromptHistory,
 } from "./prompt-history";
 import { buildScheduleBrowseRows, ScheduleBrowserModal } from "./schedule-modal";
+import { applySearchableListKey } from "./searchable-list";
+import { SearchableListOverlay } from "./searchable-list-overlay";
 import { buildSessionBrowseRows, SessionBrowserModal } from "./session-modal";
 import { filterSlashMenuItems, SLASH_MENU_ITEMS, type SlashMenuItem } from "./slash-menu";
+import { buildStatusBarLeft, buildStatusBarRight, type StatusSegment } from "./status-bar";
 import {
   buildAssistantEntry,
   buildToolResultEntry,
@@ -624,23 +641,67 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const [hasApiKey, setHasApiKey] = useState(initialHasApiKey);
   const [messages, setMessages] = useState<ChatEntry[]>(() => agent.getChatEntries());
   const [streamContent, setStreamContent] = useState("");
+  const [visibleStreamContent, setVisibleStreamContent] = useState("");
   const [_streamReasoning, setStreamReasoning] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [liveTurnSourceLabel, setLiveTurnSourceLabel] = useState<string | null>(null);
   const [model, setModel] = useState(agent.getModel());
   const [sandboxMode, setSandboxModeState] = useState<SandboxMode>(agent.getSandboxMode());
   const [mode, setModeState] = useState<AgentMode>(agent.getMode());
-  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [focusStack, setFocusStackState] = useState<FocusKind[]>(() =>
+    createFocusStack(initialHasApiKey ? "prompt" : "apiKey"),
+  );
+  const focusStackRef = useRef(focusStack);
+  const setFocusStack = useCallback((updater: FocusKind[] | ((stack: FocusKind[]) => FocusKind[])) => {
+    setFocusStackState((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      focusStackRef.current = next;
+      return next;
+    });
+  }, []);
+  const openFocus = useCallback(
+    (kind: FocusKind) => {
+      setFocusStack((stack) => pushFocus(stack, kind));
+    },
+    [setFocusStack],
+  );
+  const dismissFocus = useCallback(() => {
+    setFocusStack((stack) => popFocus(stack));
+  }, [setFocusStack]);
+  const closeKind = useCallback(
+    (kind: FocusKind) => {
+      setFocusStack((stack) => closeFocus(stack, kind));
+    },
+    [setFocusStack],
+  );
+  const focused = peekFocus(focusStack);
+  const showSlashMenu = hasFocus(focusStack, "slash");
+  const showModelPicker = hasFocus(focusStack, "model");
+  const showSandboxPicker = hasFocus(focusStack, "sandbox");
+  const showRecapPicker = hasFocus(focusStack, "recap");
+  const showWalletPicker = hasFocus(focusStack, "wallet");
+  const showApiKeyModal = hasFocus(focusStack, "apiKey");
+  const showConnectModal = hasFocus(focusStack, "connect");
+  const showTelegramTokenModal = hasFocus(focusStack, "telegramToken");
+  const showTelegramPairModal = hasFocus(focusStack, "telegramPair");
+  const showMcpModal = hasFocus(focusStack, "mcp");
+  const showMcpEditor = hasFocus(focusStack, "mcpEditor");
+  const showAgentsModal = hasFocus(focusStack, "agents");
+  const showAgentsEditor = hasFocus(focusStack, "agentsEditor");
+  const showScheduleModal = hasFocus(focusStack, "schedule");
+  const showSessionModal = hasFocus(focusStack, "session");
+  const showUpdateModal = hasFocus(focusStack, "update");
+  const showBtwOverlay = hasFocus(focusStack, "btw");
+  const showPaymentApproval = hasFocus(focusStack, "payment");
+  const showPlanPanel = hasFocus(focusStack, "plan");
+  const promptFocused = isPromptFocused(focusStack);
   const [modelPickerIndex, setModelPickerIndex] = useState(0);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
-  const [showSandboxPicker, setShowSandboxPicker] = useState(false);
   const [sandboxSettings, setSandboxSettingsState] = useState<SandboxSettings>(() => agent.getSandboxSettings());
   const [sandboxSettingsFocusIndex, setSandboxSettingsFocusIndex] = useState(0);
   const [sandboxSettingsEditing, setSandboxSettingsEditing] = useState<string | null>(null);
   const [sandboxSettingsEditBuffer, setSandboxSettingsEditBuffer] = useState("");
-  const [showRecapPicker, setShowRecapPicker] = useState(false);
   const [recapsEnabled, setRecapsEnabledState] = useState(() => agent.getRecapsEnabled());
-  const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [walletSettings, setWalletSettings] = useState<Required<PaymentSettings>>(() => loadPaymentSettings());
   const [walletFocusIndex, setWalletFocusIndex] = useState(0);
   const [walletDisplayInfo, setWalletDisplayInfo] = useState<WalletDisplayInfo>({
@@ -664,9 +725,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const [sessionTitle, setSessionTitle] = useState<string | null>(() => agent.getSessionTitle());
   const [sessionId, setSessionId] = useState<string | null>(() => agent.getSessionId());
   const [sessionRecap, setSessionRecap] = useState<string | null>(() => agent.getSessionRecap());
-  const [showApiKeyModal, setShowApiKeyModal] = useState(() => !initialHasApiKey);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
-  const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const [slashSearchQuery, setSlashSearchQuery] = useState("");
   const [btwState, setBtwState] = useState<BtwState | null>(null);
@@ -695,10 +754,11 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const { width, height } = useTerminalDimensions();
   const processedInitial = useRef(false);
   const contentAccRef = useRef("");
+  const visibleStreamRef = useRef("");
+  const lastStreamFlushAtRef = useRef(0);
   const startTimeRef = useRef(0);
   const isProcessingRef = useRef(false);
   const hasApiKeyRef = useRef(initialHasApiKey);
-  const showApiKeyModalRef = useRef(!initialHasApiKey);
   const queuedMessagesRef = useRef<QueuedMessage[]>([]);
   const promptHistoryRef = useRef(createPromptHistoryState(loadPromptHistory()));
   const processMessageRef = useRef<(text: string, displayText?: string) => Promise<void> | void>(() => {});
@@ -712,19 +772,11 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const telegramAgentsRef = useRef<Map<number, Agent>>(new Map());
   const telegramEntryCountsRef = useRef<Map<number, number>>(new Map());
   const telegramSubagentUnsubsRef = useRef<Map<number, () => void>>(new Map());
-  const [showConnectModal, setShowConnectModal] = useState(false);
-  const [showTelegramTokenModal, setShowTelegramTokenModal] = useState(false);
-  const [showTelegramPairModal, setShowTelegramPairModal] = useState(false);
   const [telegramTokenError, setTelegramTokenError] = useState<string | null>(null);
   const [telegramPairError, setTelegramPairError] = useState<string | null>(null);
   const [connectModalIndex, setConnectModalIndex] = useState(0);
   const telegramTokenInputRef = useRef<TextareaRenderable>(null);
   const telegramPairInputRef = useRef<TextareaRenderable>(null);
-  const showConnectModalRef = useRef(false);
-  const showTelegramTokenModalRef = useRef(false);
-  const showTelegramPairModalRef = useRef(false);
-  const [showMcpModal, setShowMcpModal] = useState(false);
-  const [showMcpEditor, setShowMcpEditor] = useState(false);
   const [mcpSearchQuery, setMcpSearchQuery] = useState("");
   const [mcpModalIndex, setMcpModalIndex] = useState(0);
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>(() => loadMcpServers());
@@ -733,8 +785,6 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const [mcpEditorSyncKey, setMcpEditorSyncKey] = useState(0);
   const [mcpEditorError, setMcpEditorError] = useState<string | null>(null);
   const [editingMcpId, setEditingMcpId] = useState<string | null>(null);
-  const showMcpModalRef = useRef(false);
-  const showMcpEditorRef = useRef(false);
   const mcpLabelRef = useRef<TextareaRenderable>(null);
   const mcpUrlRef = useRef<TextareaRenderable>(null);
   const mcpHeadersRef = useRef<TextareaRenderable>(null);
@@ -742,8 +792,6 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const mcpArgsRef = useRef<TextareaRenderable>(null);
   const mcpCwdRef = useRef<TextareaRenderable>(null);
   const mcpEnvRef = useRef<TextareaRenderable>(null);
-  const [showAgentsModal, setShowAgentsModal] = useState(false);
-  const [showAgentsEditor, setShowAgentsEditor] = useState(false);
   const [subAgents, setSubAgents] = useState<CustomSubagentConfig[]>(() => loadValidSubAgents());
   const [agentsSearchQuery, setAgentsSearchQuery] = useState("");
   const [agentsModalIndex, setAgentsModalIndex] = useState(0);
@@ -758,26 +806,18 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   );
   const [agentsEditorSyncKey, setAgentsEditorSyncKey] = useState(0);
   const [agentsEditorError, setAgentsEditorError] = useState<string | null>(null);
-  const showAgentsModalRef = useRef(false);
-  const showAgentsEditorRef = useRef(false);
   const subagentNameRef = useRef<TextareaRenderable>(null);
   const subagentInstructionRef = useRef<TextareaRenderable>(null);
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [schedules, setSchedules] = useState<StoredSchedule[]>([]);
   const [scheduleSearchQuery, setScheduleSearchQuery] = useState("");
   const [scheduleModalIndex, setScheduleModalIndex] = useState(0);
-  const showScheduleModalRef = useRef(false);
-  const [showSessionModal, setShowSessionModal] = useState(false);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionSearchQuery, setSessionSearchQuery] = useState("");
   const [sessionModalIndex, setSessionModalIndex] = useState(0);
-  const showSessionModalRef = useRef(false);
 
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateOutput, setUpdateOutput] = useState<string | null>(null);
-  const showUpdateModalRef = useRef(false);
 
   const fileIndexRef = useRef<FileIndex | null>(null);
   if (!fileIndexRef.current) {
@@ -913,8 +953,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     setSandboxSettingsFocusIndex(0);
     setSandboxSettingsEditing(null);
     setSandboxSettingsEditBuffer("");
-    setShowSandboxPicker(true);
-  }, []);
+    openFocus("sandbox");
+  }, [openFocus]);
 
   const applyRecapsEnabled = useCallback(
     (enabled: boolean) => {
@@ -930,8 +970,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   );
 
   const openRecapPicker = useCallback(() => {
-    setShowRecapPicker(true);
-  }, []);
+    openFocus("recap");
+  }, [openFocus]);
 
   const applyWalletSettings = useCallback((next: Required<PaymentSettings>) => {
     setWalletSettings(next);
@@ -941,7 +981,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const openWalletPicker = useCallback(() => {
     setWalletFocusIndex(0);
     setWalletSettings(loadPaymentSettings());
-    setShowWalletPicker(true);
+    openFocus("wallet");
     setWalletDisplayInfo({ address: null, ethBalance: null, usdcBalance: null });
     import("../wallet/manager")
       .then(async ({ WalletManager }) => {
@@ -960,7 +1000,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         });
       })
       .catch(() => {});
-  }, []);
+  }, [openFocus]);
 
   const setReasoningEfforts = useCallback((next: Record<string, ReasoningEffort>) => {
     setReasoningEffortByModel(next);
@@ -1025,21 +1065,22 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     setMcpServers(latest);
     setMcpSearchQuery("");
     setMcpModalIndex(0);
-    setShowMcpModal(true);
-    setShowMcpEditor(false);
     setEditingMcpId(null);
     setMcpEditorError(null);
-  }, []);
+    setFocusStack((stack) => pushFocus(closeFocus(stack, "mcpEditor"), "mcp"));
+  }, [setFocusStack]);
 
-  const openMcpEditor = useCallback((draft: McpEditorDraft, editingId: string | null = null) => {
-    setMcpEditorDraft(draft);
-    setEditingMcpId(editingId);
-    setMcpEditorField("transport");
-    setMcpEditorError(null);
-    setMcpEditorSyncKey((n) => n + 1);
-    setShowMcpEditor(true);
-    setShowMcpModal(true);
-  }, []);
+  const openMcpEditor = useCallback(
+    (draft: McpEditorDraft, editingId: string | null = null) => {
+      setMcpEditorDraft(draft);
+      setEditingMcpId(editingId);
+      setMcpEditorField("transport");
+      setMcpEditorError(null);
+      setMcpEditorSyncKey((n) => n + 1);
+      openFocus("mcpEditor");
+    },
+    [openFocus],
+  );
 
   const openCatalogMcp = useCallback(
     (entry: (typeof POPULAR_MCP_CATALOG)[number]) => {
@@ -1119,9 +1160,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     setAgentsModalIndex(0);
     setEditingSubagent(null);
     setAgentsEditorError(null);
-    setShowAgentsEditor(false);
-    setShowAgentsModal(true);
-  }, []);
+    setFocusStack((stack) => pushFocus(closeFocus(stack, "agentsEditor"), "agents"));
+  }, [setFocusStack]);
 
   const openScheduleModal = useCallback(() => {
     void agent
@@ -1130,13 +1170,13 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         setSchedules(latest);
         setScheduleSearchQuery("");
         setScheduleModalIndex(0);
-        setShowScheduleModal(true);
+        openFocus("schedule");
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         setMessages((prev) => [...prev, buildAssistantEntry(`Failed to load schedules: ${message}`)]);
       });
-  }, [agent]);
+  }, [agent, openFocus]);
 
   const showScheduleDetails = useCallback(
     (schedule: StoredSchedule) => {
@@ -1144,7 +1184,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         .getScheduleDaemonStatus()
         .then((status) => {
           setMessages((prev) => [...prev, buildAssistantEntry(formatScheduleDetails(schedule, status))]);
-          setShowScheduleModal(false);
+          closeKind("schedule");
           setScheduleSearchQuery("");
           setTimeout(() => {
             try {
@@ -1159,7 +1199,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           setMessages((prev) => [...prev, buildAssistantEntry(`Failed to load schedule details: ${message}`)]);
         });
     },
-    [agent],
+    [agent, closeKind],
   );
 
   const removeSchedule = useCallback(
@@ -1187,31 +1227,33 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     [agent],
   );
 
-  const openSubagentEditor = useCallback((agent: CustomSubagentConfig | null) => {
-    setEditingSubagent(agent);
-    if (agent) {
-      setAgentsEditorDraft({ name: agent.name, instruction: agent.instruction });
-      setAgentsEditorModelIndex(
-        Math.max(
-          0,
-          MODELS.findIndex((model) => model.id === normalizeModelId(agent.model)),
-        ),
-      );
-    } else {
-      setAgentsEditorDraft({ name: "", instruction: "" });
-      setAgentsEditorModelIndex(
-        Math.max(
-          0,
-          MODELS.findIndex((model) => model.id === DEFAULT_MODEL),
-        ),
-      );
-    }
-    setAgentsEditorField("name");
-    setAgentsEditorError(null);
-    setAgentsEditorSyncKey((n) => n + 1);
-    setShowAgentsEditor(true);
-    setShowAgentsModal(true);
-  }, []);
+  const openSubagentEditor = useCallback(
+    (agent: CustomSubagentConfig | null) => {
+      setEditingSubagent(agent);
+      if (agent) {
+        setAgentsEditorDraft({ name: agent.name, instruction: agent.instruction });
+        setAgentsEditorModelIndex(
+          Math.max(
+            0,
+            MODELS.findIndex((model) => model.id === normalizeModelId(agent.model)),
+          ),
+        );
+      } else {
+        setAgentsEditorDraft({ name: "", instruction: "" });
+        setAgentsEditorModelIndex(
+          Math.max(
+            0,
+            MODELS.findIndex((model) => model.id === DEFAULT_MODEL),
+          ),
+        );
+      }
+      setAgentsEditorField("name");
+      setAgentsEditorError(null);
+      setAgentsEditorSyncKey((n) => n + 1);
+      openFocus("agentsEditor");
+    },
+    [openFocus],
+  );
 
   const submitSubagentEditor = useCallback(() => {
     const name = (subagentNameRef.current?.plainText || "").trim();
@@ -1245,10 +1287,10 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     next.push({ name, model, instruction });
     saveUserSettings({ subAgents: next });
     setSubAgents(loadValidSubAgents());
-    setShowAgentsEditor(false);
+    closeKind("agentsEditor");
     setEditingSubagent(null);
     setAgentsEditorError(null);
-  }, [agentsEditorModelIndex, editingSubagent, subAgents]);
+  }, [agentsEditorModelIndex, closeKind, editingSubagent, subAgents]);
 
   const removeEditingSubagent = useCallback(() => {
     if (!editingSubagent) return;
@@ -1256,11 +1298,11 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     const next = subAgents.filter((item) => item.name !== editingSubagent.name);
     saveUserSettings({ subAgents: next });
     setSubAgents(loadValidSubAgents());
-    setShowAgentsEditor(false);
+    closeKind("agentsEditor");
     setEditingSubagent(null);
     setAgentsEditorError(null);
     setAgentsModalIndex(0);
-  }, [editingSubagent, subAgents]);
+  }, [closeKind, editingSubagent, subAgents]);
 
   const submitMcpEditor = useCallback(() => {
     const draft: McpEditorDraft = {
@@ -1322,7 +1364,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       : [...currentServers, server];
     saveMcpServers(nextServers);
     setMcpServers(nextServers);
-    setShowMcpEditor(false);
+    closeKind("mcpEditor");
     setEditingMcpId(null);
     setMcpEditorError(null);
     setMcpSearchQuery("");
@@ -1332,7 +1374,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         nextServers.findIndex((item) => item.id === (editingMcpId ?? server.id)),
       ),
     );
-  }, [editingMcpId, mcpEditorDraft.transport]);
+  }, [closeKind, editingMcpId, mcpEditorDraft.transport]);
 
   const cycleMcpEditorTransport = useCallback(
     (direction: 1 | -1 = 1) => {
@@ -1433,8 +1475,29 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     }
   }, []);
 
+  const publishStreamContent = useCallback((next: string, force = false) => {
+    setStreamContent(next);
+    const now = Date.now();
+    if (
+      !force &&
+      !shouldFlushStreamMarkdown({
+        previous: visibleStreamRef.current,
+        next,
+        elapsedMs: now - lastStreamFlushAtRef.current,
+      })
+    ) {
+      return;
+    }
+    visibleStreamRef.current = next;
+    lastStreamFlushAtRef.current = now;
+    setVisibleStreamContent(next);
+  }, []);
+
   const clearLiveTurnUi = useCallback(() => {
     setStreamContent("");
+    visibleStreamRef.current = "";
+    lastStreamFlushAtRef.current = 0;
+    setVisibleStreamContent("");
     setStreamReasoning("");
     setActiveToolCalls([]);
     setActiveSubagent(null);
@@ -1478,7 +1541,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     const cleaned = sanitizeContent(contentAccRef.current);
     if (!cleaned) {
       contentAccRef.current = "";
-      setStreamContent("");
+      publishStreamContent("", true);
       if (activeTurn.kind === "telegram") {
         activeTurn.flushedAssistantChars = activeTurn.latestAssistantText.length;
       }
@@ -1499,16 +1562,16 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     }
 
     contentAccRef.current = "";
-    setStreamContent("");
-  }, []);
+    publishStreamContent("", true);
+  }, [publishStreamContent]);
 
   const applyLocalAssistantDelta = useCallback(
     (delta: string) => {
       contentAccRef.current += delta;
-      setStreamContent(sanitizeContent(contentAccRef.current));
+      publishStreamContent(sanitizeContent(contentAccRef.current));
       setTimeout(scrollToBottom, 10);
     },
-    [scrollToBottom],
+    [publishStreamContent, scrollToBottom],
   );
 
   const applyTelegramAssistantPreview = useCallback(
@@ -1518,10 +1581,10 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
 
       activeTurn.latestAssistantText = fullContent;
       contentAccRef.current = getUnflushedTelegramAssistantContent(fullContent, activeTurn.flushedAssistantChars);
-      setStreamContent(sanitizeContent(contentAccRef.current));
+      publishStreamContent(sanitizeContent(contentAccRef.current));
       setTimeout(scrollToBottom, 10);
     },
-    [scrollToBottom],
+    [publishStreamContent, scrollToBottom],
   );
 
   const showLiveToolCalls = useCallback(
@@ -1550,12 +1613,13 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       if (toolResult.plan?.questions?.length) {
         setActivePlan(toolResult.plan);
         setPqs(initialPlanQuestionsState());
+        openFocus("plan");
       }
 
       setActiveToolCalls([]);
       setTimeout(scrollToBottom, 10);
     },
-    [scrollToBottom],
+    [openFocus, scrollToBottom],
   );
 
   const syncTelegramTurnEntries = useCallback((activeTurn: ActiveTurnState) => {
@@ -1831,16 +1895,14 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   }, [copyFlashId]);
 
   const openApiKeyModal = useCallback(() => {
-    showApiKeyModalRef.current = true;
     setApiKeyError(null);
-    setShowApiKeyModal(true);
-  }, []);
+    openFocus("apiKey");
+  }, [openFocus]);
 
   const closeApiKeyModal = useCallback(() => {
-    showApiKeyModalRef.current = false;
     setApiKeyError(null);
-    setShowApiKeyModal(false);
-  }, []);
+    closeKind("apiKey");
+  }, [closeKind]);
 
   const submitApiKey = useCallback(() => {
     const apiKey = (apiKeyInputRef.current?.plainText || "").trim();
@@ -1856,54 +1918,18 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     saveUserSettings({ apiKey });
     agent.setApiKey(apiKey);
     hasApiKeyRef.current = true;
-    showApiKeyModalRef.current = false;
     setHasApiKey(true);
     setApiKeyError(null);
-    setShowApiKeyModal(false);
+    closeKind("apiKey");
     apiKeyInputRef.current?.clear();
     if (getTelegramBotToken()) {
       startTelegramBridge();
     }
-  }, [agent, startTelegramBridge]);
+  }, [agent, closeKind, startTelegramBridge]);
 
   useEffect(() => {
     hasApiKeyRef.current = hasApiKey;
   }, [hasApiKey]);
-
-  useEffect(() => {
-    showApiKeyModalRef.current = showApiKeyModal;
-  }, [showApiKeyModal]);
-
-  useEffect(() => {
-    showConnectModalRef.current = showConnectModal;
-  }, [showConnectModal]);
-  useEffect(() => {
-    showTelegramTokenModalRef.current = showTelegramTokenModal;
-  }, [showTelegramTokenModal]);
-  useEffect(() => {
-    showTelegramPairModalRef.current = showTelegramPairModal;
-  }, [showTelegramPairModal]);
-  useEffect(() => {
-    showMcpModalRef.current = showMcpModal;
-  }, [showMcpModal]);
-  useEffect(() => {
-    showMcpEditorRef.current = showMcpEditor;
-  }, [showMcpEditor]);
-  useEffect(() => {
-    showAgentsModalRef.current = showAgentsModal;
-  }, [showAgentsModal]);
-  useEffect(() => {
-    showAgentsEditorRef.current = showAgentsEditor;
-  }, [showAgentsEditor]);
-  useEffect(() => {
-    showScheduleModalRef.current = showScheduleModal;
-  }, [showScheduleModal]);
-  useEffect(() => {
-    showSessionModalRef.current = showSessionModal;
-  }, [showSessionModal]);
-  useEffect(() => {
-    showUpdateModalRef.current = showUpdateModal;
-  }, [showUpdateModal]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1936,10 +1962,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     const u = loadUserSettings();
     saveUserSettings({ telegram: { ...u.telegram, botToken: token } });
     telegramTokenInputRef.current?.clear();
-    setShowTelegramTokenModal(false);
+    setFocusStack((stack) => replaceTopFocus(stack, "telegramPair"));
     setTelegramTokenError(null);
     startTelegramBridge();
-    setShowTelegramPairModal(true);
     setTelegramPairError(null);
     setMessages((p) => [
       ...p,
@@ -1950,7 +1975,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         timestamp: new Date(),
       },
     ]);
-  }, [startTelegramBridge]);
+  }, [setFocusStack, startTelegramBridge]);
 
   const submitTelegramPair = useCallback(async () => {
     const code = (telegramPairInputRef.current?.plainText || "").trim();
@@ -1965,7 +1990,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     }
     saveApprovedTelegramUserId(result.userId);
     telegramPairInputRef.current?.clear();
-    setShowTelegramPairModal(false);
+    closeKind("telegramPair");
     setTelegramPairError(null);
     setMessages((p) => [
       ...p,
@@ -1980,24 +2005,24 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     } catch {
       /* optional DM */
     }
-  }, []);
+  }, [closeKind]);
 
   const beginTelegramFromConnect = useCallback(() => {
-    setShowConnectModal(false);
+    closeKind("connect");
     if (!getApiKey()) {
       setMessages((p) => [...p, { type: "assistant", content: "Add a Grok API key first.", timestamp: new Date() }]);
       openApiKeyModal();
       return;
     }
     if (!getTelegramBotToken()) {
-      setShowTelegramTokenModal(true);
+      openFocus("telegramToken");
       setTelegramTokenError(null);
       return;
     }
     startTelegramBridge();
     const alreadyPaired = (loadUserSettings().telegram?.approvedUserIds?.length ?? 0) > 0;
     if (!alreadyPaired) {
-      setShowTelegramPairModal(true);
+      openFocus("telegramPair");
       setTelegramPairError(null);
       setMessages((p) => [
         ...p,
@@ -2018,7 +2043,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         },
       ]);
     }
-  }, [openApiKeyModal, startTelegramBridge]);
+  }, [closeKind, openApiKeyModal, openFocus, startTelegramBridge]);
 
   const interruptActiveRun = useCallback(
     (key?: KeyEvent) => {
@@ -2027,6 +2052,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         btwAbortRef.current = null;
         btwStateRef.current = null;
         setBtwState(null);
+        closeKind("btw");
         key?.preventDefault();
         key?.stopPropagation();
         return true;
@@ -2043,7 +2069,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       activeAgent.abort();
       return true;
     },
-    [agent, clearLiveTurnUi],
+    [agent, clearLiveTurnUi, closeKind],
   );
 
   useEffect(() => {
@@ -2101,6 +2127,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       setModel(agent.getModel());
       setActivePlan(null);
       setPqs(initialPlanQuestionsState());
+      setFocusStack(resetFocus());
       replacePasteBlocks([]);
       queuedMessagesRef.current = [];
       setQueuedMessages([]);
@@ -2111,7 +2138,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       btwStateRef.current = null;
       setBtwState(null);
     },
-    [agent, clearLiveTurnUi, replacePasteBlocks],
+    [agent, clearLiveTurnUi, replacePasteBlocks, setFocusStack],
   );
 
   const resetToNewSession = useCallback(() => {
@@ -2127,14 +2154,14 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
 
   const beginUpdate = useCallback(() => {
     if (isUpdating) return;
-    setShowUpdateModal(false);
+    closeKind("update");
     setIsUpdating(true);
     setUpdateOutput(null);
     runUpdate(startupConfig.version).then((result) => {
       setIsUpdating(false);
       setUpdateOutput(result.success ? result.output : `Update failed: ${result.output}`);
     });
-  }, [isUpdating, startupConfig.version]);
+  }, [closeKind, isUpdating, startupConfig.version]);
 
   const formatResumedSessionLabel = useCallback((session: SessionInfo): string => {
     const title = session.title?.trim();
@@ -2159,7 +2186,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           return false;
         }
         applySessionSnapshot(snapshot);
-        setShowSessionModal(false);
+        closeKind("session");
         setSessionSearchQuery("");
         if (snapshot.session.id !== currentId) {
           setMessages((prev) => [
@@ -2174,7 +2201,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         return false;
       }
     },
-    [agent, applySessionSnapshot, formatResumedSessionLabel],
+    [agent, applySessionSnapshot, closeKind, formatResumedSessionLabel],
   );
 
   const openSessionPicker = useCallback(() => {
@@ -2190,8 +2217,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     setSessionSearchQuery("");
     const currentIndex = latest.findIndex((session) => session.id === agent.getSessionId());
     setSessionModalIndex(currentIndex >= 0 ? currentIndex : 0);
-    setShowSessionModal(true);
-  }, [agent]);
+    openFocus("session");
+  }, [agent, openFocus]);
 
   const processMessage = useCallback(
     async (text: string, displayText?: string) => {
@@ -2246,6 +2273,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
                     /* ignore */
                   }
                   const pc = chunk.paymentPrecheck;
+                  openFocus("payment");
                   setPendingPaymentApproval({
                     url: args?.url ?? "",
                     description: pc?.description ?? "",
@@ -2266,7 +2294,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
                   turnHadAuthError = true;
                 }
                 contentAccRef.current += `\n${chunk.content || "Unknown error"}`;
-                setStreamContent(contentAccRef.current);
+                publishStreamContent(contentAccRef.current, true);
                 break;
               case "done":
                 break;
@@ -2276,7 +2304,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           turnHadError = true;
           if (!isStale()) {
             contentAccRef.current += "\nAn unexpected error occurred.";
-            setStreamContent(contentAccRef.current);
+            publishStreamContent(contentAccRef.current, true);
           }
         }
         const wasInterrupted = interruptedRunIdRef.current === runId;
@@ -2287,8 +2315,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
 
         if (turnHadAuthError) {
           setApiKeyError("Your API key is invalid or expired. Please enter a new key.");
-          setShowApiKeyModal(true);
-          showApiKeyModalRef.current = true;
+          openFocus("apiKey");
         }
 
         if (!isStale()) {
@@ -2305,6 +2332,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       applyLocalAssistantDelta,
       beginLiveTurn,
       finalizeActiveTurn,
+      openFocus,
+      publishStreamContent,
       scrollToBottom,
       sessionTitle,
       showLiveToolCalls,
@@ -2371,9 +2400,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         return true;
       }
       if (c === "/model" || c === "/models") {
-        setShowModelPicker(true);
         setModelPickerIndex(0);
         setModelSearchQuery("");
+        openFocus("model");
         return true;
       }
       if (c === "/sandbox") {
@@ -2390,7 +2419,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       }
       if (c === "/remote-control") {
         setConnectModalIndex(0);
-        setShowConnectModal(true);
+        openFocus("connect");
         return true;
       }
       if (c === "/mcp" || c === "/mcps") {
@@ -2463,6 +2492,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         const loadingState: BtwState = { status: "loading", question };
         btwStateRef.current = loadingState;
         setBtwState(loadingState);
+        openFocus("btw");
         agent
           .askSideQuestion(question, ac.signal)
           .then((result) => {
@@ -2516,6 +2546,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       beginUpdate,
       openSessionPicker,
       processMessage,
+      openFocus,
       resetToNewSession,
       subAgents,
       switchToSession,
@@ -2524,7 +2555,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
 
   const handleSlashMenuSelect = useCallback(
     (item: SlashMenuItem) => {
-      setShowSlashMenu(false);
+      closeKind("slash");
       inputRef.current?.clear();
       switch (item.id) {
         case "new":
@@ -2534,9 +2565,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           openSessionPicker();
           break;
         case "models":
-          setShowModelPicker(true);
           setModelPickerIndex(0);
           setModelSearchQuery("");
+          openFocus("model");
           break;
         case "sandbox":
           openSandboxPicker();
@@ -2549,7 +2580,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           break;
         case "remote-control":
           setConnectModalIndex(0);
-          setShowConnectModal(true);
+          openFocus("connect");
           break;
         case "exit":
           handleExit();
@@ -2622,6 +2653,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       openWalletPicker,
       openScheduleModal,
       beginUpdate,
+      closeKind,
+      openFocus,
       openSessionPicker,
       processMessage,
       resetToNewSession,
@@ -2629,22 +2662,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     ],
   );
 
-  const blockPrompt =
-    showConnectModal ||
-    showTelegramTokenModal ||
-    showTelegramPairModal ||
-    showMcpModal ||
-    showSandboxPicker ||
-    showRecapPicker ||
-    showWalletPicker ||
-    !!pendingPaymentApproval ||
-    showScheduleModal ||
-    showSessionModal ||
-    showAgentsModal ||
-    showAgentsEditor ||
-    showUpdateModal;
-
-  const showPlanPanel = !!activePlan?.questions?.length;
+  const blockPrompt = !promptFocused && focused !== "slash";
   const planQuestions = activePlan?.questions ?? [];
   const isSinglePlan = planQuestions.length === 1 && planQuestions[0]?.type !== "multiselect";
   const planTabCount = isSinglePlan ? 1 : planQuestions.length + 1;
@@ -2653,15 +2671,17 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
   const dismissPlan = useCallback(() => {
     setActivePlan(null);
     setPqs(initialPlanQuestionsState());
-  }, []);
+    closeKind("plan");
+  }, [closeKind]);
 
   const submitPlanAnswers = useCallback(() => {
     if (!activePlan?.questions?.length) return;
     const text = formatPlanAnswers(activePlan.questions, pqs.answers);
     setActivePlan(null);
     setPqs(initialPlanQuestionsState());
+    closeKind("plan");
     processMessage(text);
-  }, [activePlan, pqs.answers, processMessage]);
+  }, [activePlan, closeKind, pqs.answers, processMessage]);
 
   const handlePlanSelect = useCallback(
     (q: PlanQuestion, idx: number, options: { id: string; label: string }[], showCustom: boolean) => {
@@ -2710,7 +2730,8 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
     btwAbortRef.current = null;
     btwStateRef.current = null;
     setBtwState(null);
-  }, []);
+    closeKind("btw");
+  }, [closeKind]);
 
   const handleKey = useCallback(
     (key: KeyEvent) => {
@@ -2720,13 +2741,14 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         beginUpdate();
         return;
       }
-      if (btwState) {
+      const currentFocus = peekFocus(focusStackRef.current);
+      if (currentFocus === "btw") {
         if (isEscapeKey(key) || key.name === "return") {
           dismissBtw();
         }
         return;
       }
-      if (showPlanPanel) {
+      if (currentFocus === "plan") {
         const q = planQuestions[pqs.tab];
 
         // Escape always dismisses
@@ -2851,9 +2873,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
 
         return;
       }
-      if (showUpdateModalRef.current) {
+      if (currentFocus === "update") {
         if (isEscapeKey(key)) {
-          setShowUpdateModal(false);
+          dismissFocus();
           return;
         }
         if (key.name === "return") {
@@ -2862,9 +2884,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
-      if (showMcpEditorRef.current) {
+      if (currentFocus === "mcpEditor") {
         if (isEscapeKey(key)) {
-          setShowMcpEditor(false);
+          dismissFocus();
           setMcpEditorError(null);
           setMcpSearchQuery("");
           return;
@@ -2887,9 +2909,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           return;
         }
       }
-      if (showAgentsEditorRef.current) {
+      if (currentFocus === "agentsEditor") {
         if (isEscapeKey(key)) {
-          setShowAgentsEditor(false);
+          dismissFocus();
           setAgentsEditorError(null);
           return;
         }
@@ -2927,22 +2949,13 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           return;
         }
       }
-      if (showMcpModalRef.current) {
+      if (currentFocus === "mcp") {
         const row = mcpRows[mcpModalIndex];
         if (isEscapeKey(key)) {
-          setShowMcpEditor(false);
-          setShowMcpModal(false);
+          dismissFocus();
           setMcpSearchQuery("");
           setEditingMcpId(null);
           setMcpEditorError(null);
-          return;
-        }
-        if (key.name === "up") {
-          setMcpModalIndex((i) => Math.max(0, i - 1));
-          return;
-        }
-        if (key.name === "down") {
-          setMcpModalIndex((i) => Math.min(mcpRows.length - 1, i + 1));
           return;
         }
         if (key.name === "return") {
@@ -2967,31 +2980,23 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           deleteSavedMcp(row.server);
           return;
         }
-        if (key.name === "backspace") {
-          setMcpSearchQuery((q) => q.slice(0, -1));
-          setMcpModalIndex(0);
-          return;
-        }
-        if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
-          setMcpSearchQuery((q) => q + key.sequence);
-          setMcpModalIndex(0);
+        if (
+          applyListKey(
+            key,
+            { index: mcpModalIndex, length: mcpRows.length, query: mcpSearchQuery },
+            setMcpModalIndex,
+            setMcpSearchQuery,
+          )
+        ) {
           return;
         }
         return;
       }
-      if (showSessionModalRef.current) {
+      if (currentFocus === "session") {
         const row = sessionRows[sessionModalIndex];
         if (isEscapeKey(key)) {
-          setShowSessionModal(false);
+          dismissFocus();
           setSessionSearchQuery("");
-          return;
-        }
-        if (key.name === "up") {
-          setSessionModalIndex((index) => Math.max(0, index - 1));
-          return;
-        }
-        if (key.name === "down") {
-          setSessionModalIndex((index) => Math.min(Math.max(0, sessionRows.length - 1), index + 1));
           return;
         }
         if (key.name === "return") {
@@ -3000,31 +3005,23 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           }
           return;
         }
-        if (key.name === "backspace") {
-          setSessionSearchQuery((query) => query.slice(0, -1));
-          setSessionModalIndex(0);
-          return;
-        }
-        if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
-          setSessionSearchQuery((query) => query + key.sequence);
-          setSessionModalIndex(0);
+        if (
+          applyListKey(
+            key,
+            { index: sessionModalIndex, length: sessionRows.length, query: sessionSearchQuery },
+            setSessionModalIndex,
+            setSessionSearchQuery,
+          )
+        ) {
           return;
         }
         return;
       }
-      if (showScheduleModalRef.current) {
+      if (currentFocus === "schedule") {
         const row = scheduleRows[scheduleModalIndex];
         if (isEscapeKey(key)) {
-          setShowScheduleModal(false);
+          dismissFocus();
           setScheduleSearchQuery("");
-          return;
-        }
-        if (key.name === "up") {
-          setScheduleModalIndex((index) => Math.max(0, index - 1));
-          return;
-        }
-        if (key.name === "down") {
-          setScheduleModalIndex((index) => Math.min(Math.max(0, scheduleRows.length - 1), index + 1));
           return;
         }
         if (key.name === "return") {
@@ -3037,34 +3034,25 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           removeSchedule(row.schedule);
           return;
         }
-        if (key.name === "backspace") {
-          setScheduleSearchQuery((query) => query.slice(0, -1));
-          setScheduleModalIndex(0);
-          return;
-        }
-        if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
-          setScheduleSearchQuery((query) => query + key.sequence);
-          setScheduleModalIndex(0);
+        if (
+          applyListKey(
+            key,
+            { index: scheduleModalIndex, length: scheduleRows.length, query: scheduleSearchQuery },
+            setScheduleModalIndex,
+            setScheduleSearchQuery,
+          )
+        ) {
           return;
         }
         return;
       }
-      if (showAgentsModalRef.current && !showAgentsEditorRef.current) {
+      if (currentFocus === "agents") {
         const row = agentRows[agentsModalIndex];
         if (isEscapeKey(key)) {
-          setShowAgentsModal(false);
-          setShowAgentsEditor(false);
+          dismissFocus();
           setAgentsSearchQuery("");
           setEditingSubagent(null);
           setAgentsEditorError(null);
-          return;
-        }
-        if (key.name === "up") {
-          setAgentsModalIndex((index) => Math.max(0, index - 1));
-          return;
-        }
-        if (key.name === "down") {
-          setAgentsModalIndex((index) => Math.min(Math.max(0, agentRows.length - 1), index + 1));
           return;
         }
         if (key.name === "return") {
@@ -3077,21 +3065,21 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           openSubagentEditor(null);
           return;
         }
-        if (key.name === "backspace") {
-          setAgentsSearchQuery((query) => query.slice(0, -1));
-          setAgentsModalIndex(0);
-          return;
-        }
-        if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
-          setAgentsSearchQuery((query) => query + key.sequence);
-          setAgentsModalIndex(0);
+        if (
+          applyListKey(
+            key,
+            { index: agentsModalIndex, length: agentRows.length, query: agentsSearchQuery },
+            setAgentsModalIndex,
+            setAgentsSearchQuery,
+          )
+        ) {
           return;
         }
         return;
       }
-      if (showTelegramTokenModalRef.current) {
+      if (currentFocus === "telegramToken") {
         if (isEscapeKey(key)) {
-          setShowTelegramTokenModal(false);
+          dismissFocus();
           setTelegramTokenError(null);
           return;
         }
@@ -3100,9 +3088,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
-      if (showTelegramPairModalRef.current) {
+      if (currentFocus === "telegramPair") {
         if (isEscapeKey(key)) {
-          setShowTelegramPairModal(false);
+          dismissFocus();
           setTelegramPairError(null);
           return;
         }
@@ -3111,9 +3099,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
-      if (showConnectModalRef.current) {
+      if (currentFocus === "connect") {
         if (isEscapeKey(key)) {
-          setShowConnectModal(false);
+          dismissFocus();
           return;
         }
         if (key.name === "up") {
@@ -3131,7 +3119,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
-      if (showApiKeyModalRef.current) {
+      if (currentFocus === "apiKey") {
         if (isEscapeKey(key)) {
           closeApiKeyModal();
           return;
@@ -3141,19 +3129,11 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
-      if (showSlashMenu) {
+      if (currentFocus === "slash") {
         if (isEscapeKey(key)) {
-          setShowSlashMenu(false);
+          dismissFocus();
           setSlashSearchQuery("");
           inputRef.current?.clear();
-          return;
-        }
-        if (key.name === "up") {
-          setSlashMenuIndex((i) => Math.max(0, i - 1));
-          return;
-        }
-        if (key.name === "down") {
-          setSlashMenuIndex((i) => Math.min(filteredSlashItems.length - 1, i + 1));
           return;
         }
         if (key.name === "return") {
@@ -3162,30 +3142,22 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           setSlashSearchQuery("");
           return;
         }
-        if (key.name === "backspace") {
-          setSlashSearchQuery((q) => q.slice(0, -1));
-          setSlashMenuIndex(0);
-          return;
-        }
-        if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
-          setSlashSearchQuery((q) => q + key.sequence);
-          setSlashMenuIndex(0);
+        if (
+          applyListKey(
+            key,
+            { index: slashMenuIndex, length: filteredSlashItems.length, query: slashSearchQuery },
+            setSlashMenuIndex,
+            setSlashSearchQuery,
+          )
+        ) {
           return;
         }
         return;
       }
-      if (showModelPicker) {
+      if (currentFocus === "model") {
         if (isEscapeKey(key)) {
-          setShowModelPicker(false);
+          dismissFocus();
           setModelSearchQuery("");
-          return;
-        }
-        if (key.name === "up") {
-          setModelPickerIndex((i) => Math.max(0, i - 1));
-          return;
-        }
-        if (key.name === "down") {
-          setModelPickerIndex((i) => Math.min(filteredModelIds.length - 1, i + 1));
           return;
         }
         if (key.name === "left" || key.name === "right") {
@@ -3203,25 +3175,26 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
             saveProjectSettings({ model: sel });
             saveUserSettings({ defaultModel: sel });
           }
-          setShowModelPicker(false);
+          dismissFocus();
           setModelSearchQuery("");
           return;
         }
-        if (key.name === "backspace") {
-          setModelSearchQuery((q) => q.slice(0, -1));
-          setModelPickerIndex(0);
-          return;
-        }
-        if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
-          setModelSearchQuery((q) => q + key.sequence);
-          setModelPickerIndex(0);
+        if (
+          applyListKey(
+            key,
+            { index: modelPickerIndex, length: filteredModelIds.length, query: modelSearchQuery },
+            setModelPickerIndex,
+            setModelSearchQuery,
+          )
+        ) {
           return;
         }
         return;
       }
-      if (pendingPaymentApproval) {
+      if (currentFocus === "payment" && pendingPaymentApproval) {
         if (isEscapeKey(key)) {
           setPendingPaymentApproval(null);
+          dismissFocus();
           return;
         }
         if (key.name === "up" || key.name === "down") {
@@ -3232,6 +3205,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           const approved = pendingPaymentApproval.selected === 0;
           const aid = pendingPaymentApproval.approvalId;
           setPendingPaymentApproval(null);
+          dismissFocus();
           if (aid) {
             agent.respondToToolApproval(aid, approved);
             if (approved) {
@@ -3242,9 +3216,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
-      if (showRecapPicker) {
+      if (currentFocus === "recap") {
         if (isEscapeKey(key)) {
-          setShowRecapPicker(false);
+          dismissFocus();
           return;
         }
         if (key.name === "left" || key.name === "right") {
@@ -3265,9 +3239,9 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
-      if (showWalletPicker) {
+      if (currentFocus === "wallet") {
         if (isEscapeKey(key)) {
-          setShowWalletPicker(false);
+          dismissFocus();
           return;
         }
         if (key.name === "up") {
@@ -3308,7 +3282,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
         return;
       }
-      if (showSandboxPicker) {
+      if (currentFocus === "sandbox") {
         const visibleRows = getSandboxVisibleRows(sandboxMode);
 
         if (sandboxSettingsEditing) {
@@ -3340,7 +3314,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
         }
 
         if (isEscapeKey(key)) {
-          setShowSandboxPicker(false);
+          dismissFocus();
           return;
         }
         if (key.name === "up") {
@@ -3401,7 +3375,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       if (key.sequence === "/" && !isProcessing) {
         const text = inputRef.current?.plainText || "";
         if (!text.trim()) {
-          setShowSlashMenu(true);
+          openFocus("slash");
           setSlashMenuIndex(0);
           setSlashSearchQuery("");
           return;
@@ -3481,7 +3455,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           return;
         }
       }
-      if ((key.name === "up" || key.name === "down") && !showSlashMenu && !blockPrompt && !showPlanPanel) {
+      if ((key.name === "up" || key.name === "down") && currentFocus === "prompt") {
         const ta = inputRef.current;
         const current = ta?.plainText ?? "";
         const cursor = ta?.cursorOffset ?? current.length;
@@ -3506,15 +3480,7 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
           }
         }
       }
-      const ghostBlocked =
-        isProcessing ||
-        showSlashMenu ||
-        showModelPicker ||
-        showSandboxPicker ||
-        showWalletPicker ||
-        showPlanPanel ||
-        showApiKeyModal ||
-        blockPrompt;
+      const ghostBlocked = isProcessing || !promptFocused;
       if (pluginHostRef.current.handleKey(key, ghostBlocked)) {
         return;
       }
@@ -3530,14 +3496,15 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       agentRows,
       agentsEditorField,
       agentsModalIndex,
+      agentsSearchQuery,
       beginTelegramFromConnect,
-      btwState,
       closeApiKeyModal,
       connectModalIndex,
       cycleMode,
       cycleMcpEditorTransport,
       deleteSavedMcp,
       dismissBtw,
+      dismissFocus,
       dismissPlan,
       editingSubagent,
       editSavedMcp,
@@ -3555,17 +3522,22 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       mcpEditorFields,
       mcpModalIndex,
       mcpRows,
+      mcpSearchQuery,
       modelPickerIndex,
+      modelSearchQuery,
       openApiKeyModal,
       openCatalogMcp,
+      openFocus,
       openMcpEditor,
       replacePasteBlocks,
       openSubagentEditor,
       removeSchedule,
       scheduleModalIndex,
       scheduleRows,
+      scheduleSearchQuery,
       sessionModalIndex,
       sessionRows,
+      sessionSearchQuery,
       showScheduleDetails,
       switchToSession,
       submitTelegramPair,
@@ -3585,21 +3557,15 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
       sandboxSettingsEditBuffer,
       sandboxSettingsFocusIndex,
       sandboxMode,
-      showModelPicker,
-      showPlanPanel,
-      showRecapPicker,
-      showSandboxPicker,
       pendingPaymentApproval,
       processMessage,
-      showWalletPicker,
-      showApiKeyModal,
-      blockPrompt,
+      promptFocused,
       walletSettings,
       walletFocusIndex,
       walletDisplayInfo,
       applyWalletSettings,
-      showSlashMenu,
       slashMenuIndex,
+      slashSearchQuery,
       submitApiKey,
       submitPlanAnswers,
       copyTuiSelectionToHost,
@@ -3705,59 +3671,31 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
             <scrollbox ref={scrollRef} flexGrow={1} stickyScroll={true} stickyStart={"bottom" as any}>
               {messages.map((msg, i) => (
                 <MessageView
-                  key={`${msg.timestamp.getTime()}-${msg.type}-${msg.remoteKey ?? ""}-${msg.content.slice(0, 24)}`}
+                  key={chatEntryKey(msg, i)}
                   entry={msg}
                   index={i}
                   t={t}
                   modeColor={modeInfo.color}
-                  expandedMessages={expandedMessages}
+                  expanded={expandedMessages.has(i)}
+                  width={width}
                 />
               ))}
-              {liveTurnSourceLabel && (activeToolCalls.length > 0 || streamContent || isProcessing) && (
-                <box paddingLeft={3} marginTop={1} flexShrink={0}>
-                  <text fg={t.textMuted}>{liveTurnSourceLabel}</text>
-                </box>
-              )}
-              {/* Active tool calls — pending inline */}
-              {activeToolCalls.map((tc) =>
-                tc.function.name === "task" ? (
-                  <SubagentTaskLine
-                    key={tc.id}
-                    t={t}
-                    agent={tryParseArg(tc, "agent") || "sub-agent"}
-                    label={toolArgs(tc) || "Working"}
-                    pending
-                  />
-                ) : tc.function.name === "delegate" ? (
-                  <DelegationTaskLine
-                    key={tc.id}
-                    t={t}
-                    label={toolArgs(tc) || "Background research"}
-                    pending
-                    id={undefined}
-                  />
-                ) : (
-                  <InlineTool key={tc.id} t={t} pending>
-                    {toolLabel(tc)}
-                  </InlineTool>
-                ),
-              )}
-              {activeSubagent && <SubagentActivity t={t} status={activeSubagent} />}
-              {/* Streaming assistant content */}
-              {streamContent && (
-                <box paddingLeft={3} marginTop={1} flexShrink={0}>
-                  <Markdown content={streamContent} t={t} />
-                </box>
-              )}
-              {/* Waiting indicator */}
-              {isProcessing && !streamContent && activeToolCalls.length === 0 && (
-                <ShimmerText t={t} text="Planning next moves" />
-              )}
+              <LiveTurnView
+                t={t}
+                sourceLabel={liveTurnSourceLabel}
+                activeToolCalls={activeToolCalls}
+                activeSubagent={activeSubagent}
+                streamContent={visibleStreamContent}
+                isProcessing={isProcessing}
+                width={width}
+              />
               {/* Plan questions panel — inline, OpenCode-style */}
               {showPlanPanel && <PlanQuestionsPanel t={t} questions={planQuestions} state={pqs} />}
-              {pendingPaymentApproval && <PaymentApprovalPanel t={t} payment={pendingPaymentApproval} />}
+              {showPaymentApproval && pendingPaymentApproval && (
+                <PaymentApprovalPanel t={t} payment={pendingPaymentApproval} />
+              )}
             </scrollbox>
-            {btwState && <BtwOverlay state={btwState} theme={t} />}
+            {showBtwOverlay && btwState && <BtwOverlay state={btwState} theme={t} />}
             {/* Prompt */}
             <box flexShrink={0} flexDirection="column">
               {sessionRecap ? <RecapBanner t={t} recap={sessionRecap} /> : null}
@@ -3787,11 +3725,14 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
               />
             </box>
           </box>
-          <box paddingLeft={2} paddingRight={2} paddingBottom={1} flexDirection="row" flexShrink={0}>
-            <text fg={t.textDim}>{agent.getCwd().replace(os.homedir(), "~")}</text>
-            {sandboxMode === "shuru" ? <text fg="#f97316">{" · sandbox"}</text> : null}
-            <box flexGrow={1} />
-          </box>
+          <StatusBar
+            t={t}
+            left={buildStatusBarLeft({ cwd: agent.getCwd(), homeDir: os.homedir(), sandboxMode })}
+            right={buildStatusBarRight({
+              modelName: modelInfo?.name || model,
+              contextLabel: contextStats ? formatContextLabel(contextStats) : undefined,
+            })}
+          />
         </box>
       ) : (
         /* ── Home ───────────────────────────────────────── */
@@ -3854,12 +3795,15 @@ export function App({ agent, startupConfig, initialMessage, onExit }: AppProps) 
               </text>
             </box>
           )}
-          <box paddingLeft={2} paddingRight={2} paddingBottom={1} flexDirection="row" flexShrink={0}>
-            <text fg={t.textDim}>{agent.getCwd().replace(os.homedir(), "~")}</text>
-            {sandboxMode === "shuru" ? <text fg="#f97316">{" · sandbox"}</text> : null}
-            <box flexGrow={1} />
-            <text fg={t.textDim}>{`v${startupConfig.version}`}</text>
-          </box>
+          <StatusBar
+            t={t}
+            left={buildStatusBarLeft({ cwd: agent.getCwd(), homeDir: os.homedir(), sandboxMode })}
+            right={buildStatusBarRight({
+              modelName: modelInfo?.name || model,
+              contextLabel: contextStats ? formatContextLabel(contextStats) : undefined,
+              version: `v${startupConfig.version}`,
+            })}
+          />
         </>
       )}
       {showApiKeyModal && (
@@ -4103,6 +4047,36 @@ function ContextMeter({ t, stats }: { t: Theme; stats: ContextStats }) {
       <span style={{ fg: t.textMuted }}>{`${Math.round(stats.ratioRemaining * 100)}%`}</span>
       <span style={{ fg: t.textDim }}>{` ${formatTokenCount(stats.remainingTokens)}`}</span>
     </text>
+  );
+}
+
+function formatContextLabel(stats: ContextStats): string {
+  return `${Math.round(stats.ratioRemaining * 100)}% ${formatTokenCount(stats.remainingTokens)}`;
+}
+
+function StatusBar({ t, left, right }: { t: Theme; left: StatusSegment[]; right?: StatusSegment[] }) {
+  return (
+    <box paddingLeft={2} paddingRight={2} paddingBottom={1} flexDirection="row" flexShrink={0}>
+      {left.map((segment, index) => (
+        <text
+          key={`left-${segment.tone ?? "muted"}-${segment.text}`}
+          fg={segment.tone === "warn" ? "#f97316" : segment.tone === "normal" ? t.text : t.textDim}
+        >
+          {index > 0 ? " · " : ""}
+          {segment.text}
+        </text>
+      ))}
+      <box flexGrow={1} />
+      {(right ?? []).map((segment, index) => (
+        <text
+          key={`right-${segment.tone ?? "muted"}-${segment.text}`}
+          fg={segment.tone === "warn" ? "#f97316" : segment.tone === "normal" ? t.text : t.textDim}
+        >
+          {index > 0 ? " · " : ""}
+          {segment.text}
+        </text>
+      ))}
+    </box>
   );
 }
 
@@ -4531,167 +4505,245 @@ function UserMessageContent({ content, t, expanded }: { content: string; t: Them
   );
 }
 
-function MessageView({
-  entry,
-  index,
-  t,
-  modeColor,
-  expandedMessages,
-}: {
-  entry: ChatEntry;
-  index: number;
-  t: Theme;
-  modeColor: string;
-  expandedMessages?: Set<number>;
-}) {
-  switch (entry.type) {
-    case "user":
-      return (
-        <box
-          border={["left"]}
-          customBorderChars={SPLIT}
-          borderColor={entry.modeColor || modeColor}
-          marginTop={index === 0 ? 0 : 1}
-          marginBottom={1}
-        >
+const MessageView = memo(
+  function MessageView({
+    entry,
+    index,
+    t,
+    modeColor,
+    expanded,
+    width,
+  }: {
+    entry: ChatEntry;
+    index: number;
+    t: Theme;
+    modeColor: string;
+    expanded: boolean;
+    width: number;
+  }) {
+    switch (entry.type) {
+      case "user":
+        return (
           <box
-            paddingTop={1}
-            paddingBottom={1}
-            paddingLeft={2}
-            backgroundColor={t.backgroundPanel}
-            flexShrink={0}
-            flexDirection="column"
+            border={["left"]}
+            customBorderChars={SPLIT}
+            borderColor={entry.modeColor || modeColor}
+            marginTop={index === 0 ? 0 : 1}
+            marginBottom={1}
           >
+            <box
+              paddingTop={1}
+              paddingBottom={1}
+              paddingLeft={2}
+              backgroundColor={t.backgroundPanel}
+              flexShrink={0}
+              flexDirection="column"
+            >
+              {entry.sourceLabel ? <text fg={t.textMuted}>{entry.sourceLabel}</text> : null}
+              <UserMessageContent content={entry.content} t={t} expanded={expanded} />
+            </box>
+          </box>
+        );
+
+      case "assistant":
+        return (
+          <box paddingLeft={3} marginTop={1} flexShrink={0} flexDirection="column">
             {entry.sourceLabel ? <text fg={t.textMuted}>{entry.sourceLabel}</text> : null}
-            <UserMessageContent content={entry.content} t={t} expanded={expandedMessages?.has(index) ?? false} />
-          </box>
-        </box>
-      );
-
-    case "assistant":
-      return (
-        <box paddingLeft={3} marginTop={1} flexShrink={0} flexDirection="column">
-          {entry.sourceLabel ? <text fg={t.textMuted}>{entry.sourceLabel}</text> : null}
-          <Markdown content={entry.content} t={t} />
-        </box>
-      );
-
-    case "tool_call":
-      return (
-        <box paddingLeft={3} marginTop={1}>
-          <text>
-            <span style={{ fg: entry.modeColor || modeColor }}>{"▣ "}</span>
-            <span style={{ fg: t.textMuted }}>{entry.content.replace("▣  ", "")}</span>
-          </text>
-        </box>
-      );
-
-    case "tool_result": {
-      const name = entry.toolCall?.function.name || "tool";
-      const args = toolArgs(entry.toolCall);
-      const diff = entry.toolResult?.diff;
-      const plan = entry.toolResult?.plan;
-
-      if (name === "generate_plan" && plan) {
-        return <PlanView plan={plan} t={t} />;
-      }
-
-      if (name === "task" && entry.toolResult?.task) {
-        return <TaskResultView t={t} entry={entry} />;
-      }
-
-      if (name === "delegate" && entry.toolResult?.delegation) {
-        return <DelegationResultView t={t} entry={entry} />;
-      }
-
-      if (name === "delegation_list") {
-        return <DelegationListView t={t} content={entry.content} />;
-      }
-
-      if (name === "delegation_read") {
-        return <ToolTextOutputView t={t} label={toolLabel(entry.toolCall!)} content={entry.content} />;
-      }
-
-      if (name === "lsp") {
-        const lspOp = tryParseArg(entry.toolCall, "operation") || "query";
-        const lspFile = tryParseArg(entry.toolCall, "filePath") || "";
-        const lspLine = tryParseArg(entry.toolCall, "line");
-        const lspPos = lspLine ? `:${lspLine}` : "";
-        return (
-          <box gap={0} marginTop={1}>
-            <InlineTool t={t} pending={false}>
-              {`lsp ${lspOp} ${lspFile}${lspPos}`}
-            </InlineTool>
-            <LspResultView t={t} operation={lspOp} filePath={lspFile} position={lspPos} content={entry.content} />
+            <Markdown content={entry.content} t={t} width={width} />
           </box>
         );
-      }
 
-      if ((entry.toolResult?.media?.length ?? 0) > 0) {
-        if (name === "generate_image" || name === "generate_video") {
-          return <MediaAutoOpenView t={t} label={toolLabel(entry.toolCall!)} toolResult={entry.toolResult!} />;
+      case "tool_call":
+        return (
+          <box paddingLeft={3} marginTop={1}>
+            <text>
+              <span style={{ fg: entry.modeColor || modeColor }}>{"▣ "}</span>
+              <span style={{ fg: t.textMuted }}>{entry.content.replace("▣  ", "")}</span>
+            </text>
+          </box>
+        );
+
+      case "tool_result": {
+        const name = entry.toolCall?.function.name || "tool";
+        const args = toolArgs(entry.toolCall);
+        const diff = entry.toolResult?.diff;
+        const plan = entry.toolResult?.plan;
+
+        if (name === "generate_plan" && plan) {
+          return <PlanView plan={plan} t={t} />;
         }
-        return <MediaToolResultView t={t} label={toolLabel(entry.toolCall!)} toolResult={entry.toolResult!} />;
-      }
 
-      if (name === "write_file" || name === "edit_file") {
-        const filePath = diff?.filePath || tryParseArg(entry.toolCall, "path") || args;
-        const label = name === "write_file" ? `Write ${filePath}` : `Edit ${filePath}`;
-        return (
-          <box gap={0}>
+        if (name === "task" && entry.toolResult?.task) {
+          return <TaskResultView t={t} entry={entry} />;
+        }
+
+        if (name === "delegate" && entry.toolResult?.delegation) {
+          return <DelegationResultView t={t} entry={entry} />;
+        }
+
+        if (name === "delegation_list") {
+          return <DelegationListView t={t} content={entry.content} />;
+        }
+
+        if (name === "delegation_read") {
+          return <ToolTextOutputView t={t} label={toolLabel(entry.toolCall!)} content={entry.content} />;
+        }
+
+        if (name === "lsp") {
+          const lspOp = tryParseArg(entry.toolCall, "operation") || "query";
+          const lspFile = tryParseArg(entry.toolCall, "filePath") || "";
+          const lspLine = tryParseArg(entry.toolCall, "line");
+          const lspPos = lspLine ? `:${lspLine}` : "";
+          return (
+            <box gap={0} marginTop={1}>
+              <InlineTool t={t} pending={false}>
+                {`lsp ${lspOp} ${lspFile}${lspPos}`}
+              </InlineTool>
+              <LspResultView t={t} operation={lspOp} filePath={lspFile} position={lspPos} content={entry.content} />
+            </box>
+          );
+        }
+
+        if ((entry.toolResult?.media?.length ?? 0) > 0) {
+          if (name === "generate_image" || name === "generate_video") {
+            return <MediaAutoOpenView t={t} label={toolLabel(entry.toolCall!)} toolResult={entry.toolResult!} />;
+          }
+          return <MediaToolResultView t={t} label={toolLabel(entry.toolCall!)} toolResult={entry.toolResult!} />;
+        }
+
+        if (name === "write_file" || name === "edit_file") {
+          const filePath = diff?.filePath || tryParseArg(entry.toolCall, "path") || args;
+          const label = name === "write_file" ? `Write ${filePath}` : `Edit ${filePath}`;
+          return (
+            <box gap={0}>
+              <InlineTool t={t} pending={false}>
+                {label}
+              </InlineTool>
+              {diff && <DiffView t={t} diff={diff} />}
+              {(entry.toolResult?.lspDiagnostics?.length ?? 0) > 0 && (
+                <LspDiagnosticsView t={t} diagnostics={entry.toolResult?.lspDiagnostics ?? []} />
+              )}
+            </box>
+          );
+        }
+
+        if (name === "bash" && entry.toolResult?.backgroundProcess) {
+          const bp = entry.toolResult.backgroundProcess;
+          return <BackgroundProcessLine t={t} id={bp.id} pid={bp.pid} command={bp.command} />;
+        }
+
+        if (name === "process_logs") {
+          return <ProcessLogsView t={t} content={entry.content} />;
+        }
+
+        if (name === "process_stop" || name === "process_list") {
+          return (
             <InlineTool t={t} pending={false}>
-              {label}
+              {entry.content}
             </InlineTool>
-            {diff && <DiffView t={t} diff={diff} />}
-            {(entry.toolResult?.lspDiagnostics?.length ?? 0) > 0 && (
-              <LspDiagnosticsView t={t} diagnostics={entry.toolResult?.lspDiagnostics ?? []} />
-            )}
-          </box>
-        );
-      }
+          );
+        }
 
-      if (name === "bash" && entry.toolResult?.backgroundProcess) {
-        const bp = entry.toolResult.backgroundProcess;
-        return <BackgroundProcessLine t={t} id={bp.id} pid={bp.pid} command={bp.command} />;
-      }
+        if (name === "read_file")
+          return (
+            <InlineTool
+              t={t}
+              pending={false}
+            >{`Read ${trunc(tryParseArg(entry.toolCall, "path") || args, 60)}`}</InlineTool>
+          );
+        if (name === "search_web" || name === "search_x")
+          return (
+            <InlineTool t={t} pending={false}>
+              {name === "search_web" ? "Web" : "X"}
+              {` Search "${trunc(args, 60)}"`}
+            </InlineTool>
+          );
 
-      if (name === "process_logs") {
-        return <ProcessLogsView t={t} content={entry.content} />;
-      }
-
-      if (name === "process_stop" || name === "process_list") {
         return (
           <InlineTool t={t} pending={false}>
-            {entry.content}
+            {trunc(name === "bash" ? args : `${name} ${args}`, 80)}
           </InlineTool>
         );
       }
 
-      if (name === "read_file")
-        return (
-          <InlineTool
-            t={t}
-            pending={false}
-          >{`Read ${trunc(tryParseArg(entry.toolCall, "path") || args, 60)}`}</InlineTool>
-        );
-      if (name === "search_web" || name === "search_x")
-        return (
-          <InlineTool t={t} pending={false}>
-            {name === "search_web" ? "Web" : "X"}
-            {` Search "${trunc(args, 60)}"`}
-          </InlineTool>
-        );
-
-      return (
-        <InlineTool t={t} pending={false}>
-          {trunc(name === "bash" ? args : `${name} ${args}`, 80)}
-        </InlineTool>
-      );
+      default:
+        return <text fg={t.textMuted}>{entry.content}</text>;
     }
+  },
+  (prev, next) =>
+    messageViewUnchanged(
+      {
+        entry: prev.entry,
+        index: prev.index,
+        t: prev.t,
+        modeColor: prev.modeColor,
+        expanded: prev.expanded,
+        width: prev.width,
+      },
+      {
+        entry: next.entry,
+        index: next.index,
+        t: next.t,
+        modeColor: next.modeColor,
+        expanded: next.expanded,
+        width: next.width,
+      },
+    ),
+);
 
-    default:
-      return <text fg={t.textMuted}>{entry.content}</text>;
-  }
+function LiveTurnView({
+  t,
+  sourceLabel,
+  activeToolCalls,
+  activeSubagent,
+  streamContent,
+  isProcessing,
+  width,
+}: {
+  t: Theme;
+  sourceLabel: string | null;
+  activeToolCalls: ToolCall[];
+  activeSubagent: SubagentStatus | null;
+  streamContent: string;
+  isProcessing: boolean;
+  width: number;
+}) {
+  const hasLive = Boolean(sourceLabel && (activeToolCalls.length > 0 || streamContent || isProcessing));
+  return (
+    <>
+      {hasLive && (
+        <box paddingLeft={3} marginTop={1} flexShrink={0}>
+          <text fg={t.textMuted}>{sourceLabel}</text>
+        </box>
+      )}
+      {activeToolCalls.map((tc) =>
+        tc.function.name === "task" ? (
+          <SubagentTaskLine
+            key={tc.id}
+            t={t}
+            agent={tryParseArg(tc, "agent") || "sub-agent"}
+            label={toolArgs(tc) || "Working"}
+            pending
+          />
+        ) : tc.function.name === "delegate" ? (
+          <DelegationTaskLine key={tc.id} t={t} label={toolArgs(tc) || "Background research"} pending id={undefined} />
+        ) : (
+          <InlineTool key={tc.id} t={t} pending>
+            {toolLabel(tc)}
+          </InlineTool>
+        ),
+      )}
+      {activeSubagent && <SubagentActivity t={t} status={activeSubagent} />}
+      {streamContent && (
+        <box paddingLeft={3} marginTop={1} flexShrink={0}>
+          <Markdown content={streamContent} t={t} width={width} />
+        </box>
+      )}
+      {isProcessing && !streamContent && activeToolCalls.length === 0 && (
+        <ShimmerText t={t} text="Planning next moves" />
+      )}
+    </>
+  );
 }
 
 /* ── Diff View ────────────────────────────────────────────────── */
@@ -5310,72 +5362,40 @@ function SlashMenuModal({
   searchQuery: string;
   filteredItems: SlashMenuItem[];
 }) {
-  const listRef = useRef<ScrollBoxRenderable>(null);
-  useEffect(() => {
-    const item = filteredItems[selectedIndex];
-    if (item) listRef.current?.scrollChildIntoView(`slash-${item.id}`);
-  }, [selectedIndex, filteredItems]);
-
-  const itemCount = Math.max(filteredItems.length, 1);
-  const contentHeight = itemCount + 5;
-  const maxH = Math.floor(height * 0.6);
-  const panelHeight = Math.min(contentHeight, maxH);
-  const top = bottomAlignedModalTop(height, panelHeight);
-  const overlayBg = "#000000cc" as string;
+  const selected = filteredItems[selectedIndex];
   return (
-    <box
-      position="absolute"
-      left={0}
-      top={0}
+    <SearchableListOverlay
+      t={t}
       width={width}
       height={height}
-      alignItems="center"
-      paddingTop={top}
-      backgroundColor={overlayBg}
+      title="Commands"
+      searchQuery={searchQuery}
+      searchPlaceholder="Search..."
+      selectedIndex={selectedIndex}
+      selectedId={selected ? `slash-${selected.id}` : undefined}
+      itemCount={filteredItems.length}
+      emptyLabel="No commands match your search"
+      panelWidth={Math.min(50, width - 6)}
+      contentHeight={Math.max(filteredItems.length, 1) + 5}
     >
-      <box
-        width={Math.min(50, width - 6)}
-        height={panelHeight}
-        backgroundColor={t.backgroundPanel}
-        paddingTop={1}
-        paddingBottom={1}
-        flexDirection="column"
-      >
-        <box flexShrink={0} flexDirection="row" justifyContent="space-between" paddingLeft={2} paddingRight={2}>
-          <text fg={t.primary}>
-            <b>{"Commands"}</b>
-          </text>
-          <text fg={t.textMuted}>{"esc"}</text>
+      {filteredItems.map((item, idx) => (
+        <box
+          key={item.id}
+          id={`slash-${item.id}`}
+          backgroundColor={idx === selectedIndex ? t.selectedBg : undefined}
+          paddingLeft={2}
+          paddingRight={2}
+        >
+          <box flexDirection="row" justifyContent="space-between">
+            <text fg={idx === selectedIndex ? t.selected : t.text}>
+              {"/"}
+              {item.label}
+            </text>
+            <text fg={t.textMuted}>{item.description}</text>
+          </box>
         </box>
-        <box flexShrink={0} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1}>
-          <text fg={t.text}>{searchQuery || <span style={{ fg: t.textMuted }}>{"Search..."}</span>}</text>
-        </box>
-        <scrollbox ref={listRef} flexGrow={1} minHeight={0}>
-          {filteredItems.map((item, idx) => (
-            <box
-              key={item.id}
-              id={`slash-${item.id}`}
-              backgroundColor={idx === selectedIndex ? t.selectedBg : undefined}
-              paddingLeft={2}
-              paddingRight={2}
-            >
-              <box flexDirection="row" justifyContent="space-between">
-                <text fg={idx === selectedIndex ? t.selected : t.text}>
-                  {"/"}
-                  {item.label}
-                </text>
-                <text fg={t.textMuted}>{item.description}</text>
-              </box>
-            </box>
-          ))}
-          {filteredItems.length === 0 && (
-            <box paddingLeft={2}>
-              <text fg={t.textMuted}>{"No commands match your search"}</text>
-            </box>
-          )}
-        </scrollbox>
-      </box>
-    </box>
+      ))}
+    </SearchableListOverlay>
   );
 }
 
@@ -6070,6 +6090,33 @@ function WalletPickerModal({
 }
 
 /* ── Helpers ──────────────────────────────────────────────────── */
+
+function applyListKey(
+  key: KeyEvent,
+  input: { index: number; length: number; query: string },
+  setIndex: (index: number) => void,
+  setQuery: (query: string) => void,
+): boolean {
+  const result = applySearchableListKey({
+    name: key.name,
+    sequence: key.sequence,
+    ctrl: key.ctrl,
+    meta: key.meta,
+    index: input.index,
+    length: input.length,
+    query: input.query,
+  });
+  if (result.action === "move") {
+    setIndex(result.index);
+    return true;
+  }
+  if (result.action === "query") {
+    setQuery(result.query);
+    setIndex(result.index);
+    return true;
+  }
+  return false;
+}
 
 function isEscapeKey(key: KeyEvent): boolean {
   return (

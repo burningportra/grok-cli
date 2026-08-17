@@ -23,6 +23,7 @@
     "test": "bunx vitest run",
     "test:watch": "bunx vitest",
     "lint": "biome check src/",
+    "lint:oxlint": "oxlint src/",
     "format": "biome format src/",
     "format:fix": "biome format --write src/",
     "lint:fix": "biome check --fix src/",
@@ -67,6 +68,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.8",
+    "@oxlint/plugins": "1.78.0",
     "@types/diff": "^8.0.0",
     "@types/node": "^22.19.15",
     "@types/npmcli__arborist": "^6.3.3",
@@ -74,6 +76,7 @@
     "@types/semver": "^7.7.1",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
+    "oxlint": "1.78.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
   },

@@ -1,5 +1,6 @@
 import { RGBA, SyntaxStyle } from "@opentui/core";
 import { useMemo } from "react";
+import { markdownCacheKey } from "./markdown-cache";
 import type { Theme } from "./theme";
 
 function buildSyntaxStyle(t: Theme): SyntaxStyle {
@@ -32,11 +33,13 @@ const TABLE_OPTIONS = {
   borderColor: "#333333",
 };
 
-export function Markdown({ content, t }: { content: string; t: Theme }) {
+export function Markdown({ content, t, width }: { content: string; t: Theme; width?: number }) {
   const syntaxStyle = useMemo(() => buildSyntaxStyle(t), [t]);
+  const renderKey = width === undefined ? content : markdownCacheKey(content, width);
 
   return (
     <markdown
+      key={renderKey}
       content={content}
       syntaxStyle={syntaxStyle}
       conceal={true}
